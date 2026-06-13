@@ -1,10 +1,18 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 
-import { DEFAULT_IGNORED_PATTERNS, HyperionPathError, HyperionRollbackError, HyperionWorkspace } from "../src/index.js";
+import {
+  DEFAULT_IGNORED_PATTERNS,
+  HyperionPathError,
+  HyperionRollbackError,
+  HyperionWorkspace,
+} from "../src/index.js";
+import { createIgnoreMatcher } from "../src/internal/ignore.js";
+import { normalizeWorkspacePath } from "../src/internal/path.js";
+import { probeSessionDeviceInfo, type SessionFsAdapter } from "../src/internal/session.js";
 
 const tempRoots: string[] = [];
 
@@ -12,6 +20,40 @@ function createTempWorkspace(): string {
   const root = mkdtempSync(join(tmpdir(), "hyperion-workspace-"));
   tempRoots.push(root);
   return root;
+}
+
+function getManualTrackedPaths(workspace: HyperionWorkspace): string[] {
+  return [
+    ...(
+      workspace as unknown as {
+        manualTrackedPaths: Set<string>;
+      }
+    ).manualTrackedPaths,
+  ];
+}
+
+function ensureWorkspaceSessionRoot(workspace: HyperionWorkspace): string {
+  return (
+    workspace as unknown as {
+      ensureSessionRoot(): string;
+    }
+  ).ensureSessionRoot();
+}
+
+function probeWorkspaceSessionDeviceInfo(workspace: HyperionWorkspace): {
+  workspaceDeviceId: number;
+  sessionDeviceId: number;
+  sameDevice: boolean;
+} {
+  return (
+    workspace as unknown as {
+      probeSessionDeviceInfo(): {
+        workspaceDeviceId: number;
+        sessionDeviceId: number;
+        sameDevice: boolean;
+      };
+    }
+  ).probeSessionDeviceInfo();
 }
 
 afterEach(() => {
@@ -108,6 +150,104 @@ describe("HyperionWorkspace", () => {
     assert.doesNotThrow(() => workspace.track(["src/index.ts", "src/workspace.ts"]));
     assert.throws(() => workspace.track([]), HyperionPathError);
     assert.throws(() => workspace.track([""]), HyperionPathError);
+  });
+
+  it("normalizes relative, absolute, and Windows-style paths to workspace-relative POSIX paths", () => {
+    const root = createTempWorkspace();
+
+    assert.equal(normalizeWorkspacePath(root, "src/index.ts"), "src/index.ts");
+    assert.equal(normalizeWorkspacePath(root, join(root, "src", "workspace.ts")), "src/workspace.ts");
+    assert.equal(normalizeWorkspacePath(root, "src\\internal\\path.ts"), "src/internal/path.ts");
+  });
+
+  it("rejects path traversal and paths outside the workspace", () => {
+    const root = createTempWorkspace();
+    const outsidePath = join(tmpdir(), `hyperion-outside-${Date.now()}.ts`);
+
+    assert.throws(() => normalizeWorkspacePath(root, "../outside.ts"), HyperionPathError);
+    assert.throws(() => normalizeWorkspacePath(root, "C:drive-relative.ts"), HyperionPathError);
+    assert.throws(() => normalizeWorkspacePath(root, outsidePath), HyperionPathError);
+    assert.throws(() => new HyperionWorkspace({ workspaceRoot: root, sessionRoot: "../outside" }), HyperionPathError);
+  });
+
+  it("stores tracked paths after normalization and filters ignored paths", () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+
+    workspace.track([
+      "src\\index.ts",
+      "node_modules/pkg/index.js",
+      ".git/config",
+      ".hyperion/checkpoints/session/manifest.json",
+      "dist/output.js",
+    ]);
+
+    assert.deepEqual(getManualTrackedPaths(workspace), ["src/index.ts"]);
+  });
+
+  it("allows default ignored paths to be tracked when defaults are explicitly overridden", () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace({
+      workspaceRoot: root,
+      ignoredPatterns: ["custom-output/**"],
+      overrideDefaultIgnores: true,
+    });
+
+    workspace.track(["node_modules/pkg/index.js", "custom-output/file.txt"]);
+
+    assert.deepEqual(getManualTrackedPaths(workspace), ["node_modules/pkg/index.js"]);
+  });
+
+  it("matches constrained ignore globs used by the SDK defaults", () => {
+    const matcher = createIgnoreMatcher(["node_modules/**", "generated/*.ts", "exact/path"]);
+
+    assert.equal(matcher.matches("node_modules"), true);
+    assert.equal(matcher.matches("node_modules/pkg/index.js"), true);
+    assert.equal(matcher.matches("generated/client.ts"), true);
+    assert.equal(matcher.matches("generated/nested/client.ts"), false);
+    assert.equal(matcher.matches("exact/path/file.txt"), true);
+    assert.equal(matcher.matches("src/index.ts"), false);
+  });
+
+  it("does not create the session root during construction", () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+
+    assert.equal(workspace.config.sessionRoot, join(resolve(root), ".hyperion", "checkpoints"));
+    assert.equal(existsSync(join(root, ".hyperion")), false);
+  });
+
+  it("creates the session root lazily when requested internally", () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+
+    assert.equal(existsSync(workspace.config.sessionRoot), false);
+    assert.equal(ensureWorkspaceSessionRoot(workspace), workspace.config.sessionRoot);
+    assert.equal(existsSync(workspace.config.sessionRoot), true);
+  });
+
+  it("records workspace and session device IDs for future strategy selection", () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const deviceInfo = probeWorkspaceSessionDeviceInfo(workspace);
+
+    assert.equal(typeof deviceInfo.workspaceDeviceId, "number");
+    assert.equal(typeof deviceInfo.sessionDeviceId, "number");
+    assert.equal(deviceInfo.sameDevice, deviceInfo.workspaceDeviceId === deviceInfo.sessionDeviceId);
+  });
+
+  it("detects cross-device session roots through injectable stat adapters", () => {
+    const fakeFs: SessionFsAdapter = {
+      existsSync: () => true,
+      mkdirSync: () => undefined,
+      statSync: (path) => ({ dev: path === "workspace" ? 10 : 20 }),
+    };
+
+    assert.deepEqual(probeSessionDeviceInfo("workspace", "session", fakeFs), {
+      workspaceDeviceId: 10,
+      sessionDeviceId: 20,
+      sameDevice: false,
+    });
   });
 
   it("throws typed stubs for unimplemented snapshot and rollback", async () => {

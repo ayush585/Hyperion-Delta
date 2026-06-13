@@ -1,8 +1,15 @@
 import { existsSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
 import { DEFAULT_IGNORED_PATTERNS, DEFAULT_MAX_CONCURRENT_CHECKPOINTS } from "./constants.js";
 import { HyperionError, HyperionPathError, HyperionRollbackError } from "./errors.js";
+import { createIgnoreMatcher, type IgnoreMatcher } from "./internal/ignore.js";
+import { isPathInsideRoot, normalizeWorkspacePath } from "./internal/path.js";
+import {
+  ensureSessionRoot,
+  probeSessionDeviceInfo,
+  type SessionDeviceInfo,
+} from "./internal/session.js";
 import type { CheckpointId, HyperionConfig, ReconcileResult, ResolvedHyperionConfig } from "./types.js";
 
 export class HyperionWorkspace {
@@ -10,6 +17,9 @@ export class HyperionWorkspace {
   public readonly config: ResolvedHyperionConfig;
   public readonly strategy = "pure-manifest" as const;
 
+  private readonly ignoreMatcher: IgnoreMatcher;
+  private readonly manualTrackedPaths = new Set<string>();
+  private sessionDeviceInfo?: SessionDeviceInfo;
   private fsInterceptorInstalled = false;
   private disposed = false;
 
@@ -17,6 +27,7 @@ export class HyperionWorkspace {
     const config = this.resolveConfig(rootOrConfig);
     this.root = config.workspaceRoot;
     this.config = config;
+    this.ignoreMatcher = createIgnoreMatcher(config.ignoredPatterns);
   }
 
   public track(pathOrPaths: string | string[]): void {
@@ -29,6 +40,11 @@ export class HyperionWorkspace {
     for (const path of paths) {
       if (typeof path !== "string" || path.trim() === "") {
         throw new HyperionPathError("track() paths must be non-empty strings");
+      }
+
+      const relativePath = normalizeWorkspacePath(this.root, path);
+      if (!this.ignoreMatcher.matches(relativePath)) {
+        this.manualTrackedPaths.add(relativePath);
       }
     }
   }
@@ -97,6 +113,15 @@ export class HyperionWorkspace {
     const ignoredPatterns = overrideDefaultIgnores
       ? [...(inputConfig.ignoredPatterns ?? [])]
       : [...DEFAULT_IGNORED_PATTERNS, ...(inputConfig.ignoredPatterns ?? [])];
+    const defaultSessionRoot = join(workspaceRoot, ".hyperion", "checkpoints");
+    const sessionRootInput = inputConfig.sessionRoot ?? defaultSessionRoot;
+    const sessionRoot = isAbsolute(sessionRootInput)
+      ? resolve(sessionRootInput)
+      : resolve(workspaceRoot, sessionRootInput);
+
+    if (!isPathInsideRoot(workspaceRoot, sessionRoot)) {
+      throw new HyperionPathError(`Session root must be inside workspace root: ${sessionRoot}`);
+    }
 
     return {
       workspaceRoot,
@@ -106,7 +131,17 @@ export class HyperionWorkspace {
       enableFsInterceptor: inputConfig.enableFsInterceptor ?? true,
       maxConcurrentCheckpoints:
         inputConfig.maxConcurrentCheckpoints ?? DEFAULT_MAX_CONCURRENT_CHECKPOINTS,
-      sessionRoot: resolve(inputConfig.sessionRoot ?? `${workspaceRoot}/.hyperion/checkpoints`),
+      sessionRoot,
     };
+  }
+
+  private ensureSessionRoot(): string {
+    return ensureSessionRoot(this.config.sessionRoot);
+  }
+
+  private probeSessionDeviceInfo(): SessionDeviceInfo {
+    const deviceInfo = probeSessionDeviceInfo(this.root, this.ensureSessionRoot());
+    this.sessionDeviceInfo = deviceInfo;
+    return deviceInfo;
   }
 }
