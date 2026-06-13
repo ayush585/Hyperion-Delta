@@ -3,6 +3,10 @@ import { isAbsolute, join, resolve } from "node:path";
 
 import { DEFAULT_IGNORED_PATTERNS, DEFAULT_MAX_CONCURRENT_CHECKPOINTS } from "./constants.js";
 import { HyperionError, HyperionPathError, HyperionRollbackError } from "./errors.js";
+import {
+  discoverEnvironmentProfile,
+  type EnvironmentProfile,
+} from "./internal/environment.js";
 import { createIgnoreMatcher, type IgnoreMatcher } from "./internal/ignore.js";
 import { isPathInsideRoot, normalizeWorkspacePath } from "./internal/path.js";
 import {
@@ -10,14 +14,26 @@ import {
   probeSessionDeviceInfo,
   type SessionDeviceInfo,
 } from "./internal/session.js";
-import type { CheckpointId, HyperionConfig, ReconcileResult, ResolvedHyperionConfig } from "./types.js";
+import {
+  selectStorageStrategy,
+  type StrategySelection,
+} from "./internal/strategy.js";
+import type {
+  CheckpointId,
+  HyperionConfig,
+  ReconcileResult,
+  ResolvedHyperionConfig,
+  StorageStrategyKind,
+} from "./types.js";
 
 export class HyperionWorkspace {
   public readonly root: string;
   public readonly config: ResolvedHyperionConfig;
-  public readonly strategy = "pure-manifest" as const;
+  public readonly strategy: StorageStrategyKind;
 
   private readonly ignoreMatcher: IgnoreMatcher;
+  private readonly environmentProfile: EnvironmentProfile;
+  private readonly strategySelection: StrategySelection;
   private readonly manualTrackedPaths = new Set<string>();
   private sessionDeviceInfo?: SessionDeviceInfo;
   private fsInterceptorInstalled = false;
@@ -28,6 +44,12 @@ export class HyperionWorkspace {
     this.root = config.workspaceRoot;
     this.config = config;
     this.ignoreMatcher = createIgnoreMatcher(config.ignoredPatterns);
+    this.environmentProfile = discoverEnvironmentProfile({
+      workspaceRoot: config.workspaceRoot,
+      sessionRoot: config.sessionRoot,
+    });
+    this.strategySelection = selectStorageStrategy(config, this.environmentProfile);
+    this.strategy = this.strategySelection.kind;
   }
 
   public track(pathOrPaths: string | string[]): void {

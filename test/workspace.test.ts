@@ -72,7 +72,7 @@ describe("HyperionWorkspace", () => {
 
     assert.equal(workspace.root, resolve(root));
     assert.equal(workspace.config.workspaceRoot, resolve(root));
-    assert.equal(workspace.strategy, "pure-manifest");
+    assert.ok(["tmpfs", "posix-link", "pure-manifest"].includes(workspace.strategy));
   });
 
   it("can instantiate with a config object", () => {
