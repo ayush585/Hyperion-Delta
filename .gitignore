@@ -14,6 +14,7 @@ node_modules/
 .turbo/
 .next/
 dist/
+.test-dist/
 build/
 coverage/
 
@@ -26,3 +27,6 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+
+# Private implementation planning
+IMPLEMENTATION_ROADMAP.md
