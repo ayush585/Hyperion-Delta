@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Hyperion generated workspaces and sessions
+.hyperion/
+.hyperion_*/
+.hyperion-*/
+
+# Benchmark/runtime process state
+*.pid
+
+# Package/build caches
+.cache/
+.turbo/
+.next/
+dist/
+build/
+coverage/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Temporary files
+*.tmp
+*.temp

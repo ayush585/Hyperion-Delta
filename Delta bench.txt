@@ -1,0 +1,50 @@
+Project: Hyperion Delta-Bench
+The Local Agent State-Switching I/O Audit
+
+1. The Executive Thesis
+Local autonomous coding agents (like Claude Code and Aider) face a fatal performance ceiling on enterprise repositories. To test alternative code paths or undo mistakes, they rely on standard Git operations (e.g., git reset --hard, git checkout -b).
+
+On a modern monorepo containing tens of thousands of files and deeply nested node_modules, running a Git reset forces the host operating system to execute thousands of blocking lstat() directory traversal calls. This stalls the agent’s execution loop, burning critical time on filesystem I/O rather than LLM reasoning.
+
+Hyperion Delta-Bench is a TypeScript benchmarking exploit. It mathematically proves that by replacing Git resets with native OS copy-on-write (CoW) cloning (cp --reflink on Linux, cp -c on macOS), a local CLI agent can achieve sub-5ms environment rollbacks, fundamentally unlocking high-frequency MCTS (Monte Carlo Tree Search) for local developers.
+
+2. Core Architecture & Operation
+The project is a zero-dependency TypeScript Node.js script. It does not use LLMs. It is a pure systems-level timing harness divided into three phases.
+
+Phase 1: The Monorepo Synthesizer
+Action: The script automatically generates a mock enterprise workspace to simulate heavy disk weight.
+
+Payload: It creates a directory containing 50,000 dummy .ts files, nested 10 directories deep, to accurately replicate the I/O weight of a massive Next.js or React application.
+
+Phase 2: The Legacy Runner (The Control Group)
+Action: Simulates how current SOTA agents handle state changes.
+
+Loop: 1. Initializes a Git repository in the mock workspace.
+2. Runs a loop 50 times: The "agent" edits a deeply nested file.
+3. The "agent" realizes it made a mistake and runs git reset --hard and git clean -fd via Node's child_process.execSync.
+
+Telemetry: Captures the exact high-resolution execution time (using process.hrtime.bigint()) of the Git reset blocking the Node event loop.
+
+Phase 3: The Hyperion Runner (The Native CoW Exploit)
+Action: Simulates the Hyperion Substrate copy-on-write approach.
+
+Loop:
+
+Instead of touching Git, the runner issues a native OS clone command (cp -c for macOS or cp --reflink=always for Linux) to duplicate the entire 50,000-file workspace into a hidden .hyperion_sandbox directory.
+
+Runs a loop 50 times: The "agent" edits a file inside the sandbox.
+
+The "agent" realizes it made a mistake, instantly unlinks/deletes the sandbox directory, and re-clones the base directory.
+
+Telemetry: Captures the high-resolution execution time of the directory clone and purge.
+
+3. The Output & Deliverable (The "Amit Pitch")
+After running the two phases, the script outputs a clean, terminal-based graphical table comparing the Total I/O Block Time and the Average Rollback Latency per step.
+
+Expected Result: The script will definitively prove that the Legacy Runner (Git) takes several seconds per turn, while the Hyperion Runner (Native CoW) completes the state-switch in milliseconds—a 90%+ reduction in disk latency.
+
+This repository will contain exactly two things:
+
+benchmark.ts (The testing script)
+
+README.md (A highly technical explanation of the data, directly addressing Prettiflow's scaling limits).

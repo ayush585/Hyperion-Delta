@@ -1,0 +1,28 @@
+Hyperion Delta-Bench
+Platform: linux
+Fixture: 50,000 TypeScript files, 10 layers deep
+Iterations: 50
+CoW command: cp -a --reflink=always
+
+Phase 1: Synthesizing mock enterprise monorepo...
+Phase 1 complete in 3,769.409 ms
+
+Preparing Legacy Runner baseline Git repository...
+Git baseline complete in 32,500.447 ms
+
+Phase 2: Running Legacy Runner control group...
+Phase 2 complete in 190,694.525 ms
+
+Phase 3: Running Hyperion Native CoW runner...
+Phase 3 complete in 816,614.450 ms
+
+Hyperion Delta-Bench: The Amit Pitch
++---------------------------------------------------+----------------------+--------------------------+---------+
+| Runner                                            | Total I/O Block Time | Average Rollback Latency | Samples |
++---------------------------------------------------+----------------------+--------------------------+---------+
+| Legacy Runner (git reset --hard + git clean -fd)  | 190,694.525 ms       | 3,813.890 ms             | 50      |
+| Hyperion Runner (cp -a --reflink=always + unlink) | 816,614.450 ms       | 16,332.289 ms            | 50      |
++---------------------------------------------------+----------------------+--------------------------+---------+
+
+Native CoW speedup: 0.23x
+Disk latency reduction: -328.23%

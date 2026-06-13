@@ -1,0 +1,33 @@
+Hyperion Delta-Bench
+Platform: linux (WSL2)
+Work root: /tmp/hyperion-delta-bench-mnt_c_Users_mukhe_Downloads_Hyperion_Delta_Bench
+Fixture: 50,000 TypeScript files, 10 layers deep
+Iterations: 10
+Strategy: compare Git whole-tree reset against targeted modified-file rollback
+
+Phase 1: Synthesizing read-only base monorepo...
+Phase 1 complete in 2,139.378 ms
+
+Preparing Legacy Runner Git workspace...
+Git baseline complete in 25,451.875 ms
+
+Phase 2: Running Legacy Runner control group...
+Legacy Runner (git reset --hard + git clean -fd) complete in 34,784.070 ms
+
+Phase 3: Running optimized targeted reversion runners...
+Targeted Reversion (manifest file restore) complete in 9.715 ms
+Targeted Reversion (rsync file-list/link-dest) complete in 504.942 ms
+Targeted Reversion (tmpfs dirty-set restore, WSL2) complete in 0.634 ms
+
+Hyperion Delta-Bench: Targeted State Reversion
++----------------------------------------------------+----------------------+--------------------------+---------+----------------+------------------+
+| Runner                                             | Total I/O Block Time | Average Rollback Latency | Samples | Speedup vs Git | Reduction vs Git |
++----------------------------------------------------+----------------------+--------------------------+---------+----------------+------------------+
+| Legacy Runner (git reset --hard + git clean -fd)   | 34,784.070 ms        | 3,478.407 ms             | 10      | 1.00x          | 0.00%            |
+| Targeted Reversion (manifest file restore)         | 9.715 ms             | 0.971 ms                 | 10      | 3580.50x       | 99.97%           |
+| Targeted Reversion (rsync file-list/link-dest)     | 504.942 ms           | 50.494 ms                | 10      | 68.89x         | 98.55%           |
+| Targeted Reversion (tmpfs dirty-set restore, WSL2) | 0.634 ms             | 0.063 ms                 | 10      | 54851.92x      | 100.00%          |
++----------------------------------------------------+----------------------+--------------------------+---------+----------------+------------------+
+
+Metadata lesson: full directory clone/delete was intentionally removed from Phase 3.
+The optimized runners only touch files the simulated agent changed.
