@@ -14,6 +14,7 @@ import {
   probeSessionDeviceInfo,
   type SessionDeviceInfo,
 } from "./internal/session.js";
+import { HybridStateEngine } from "./internal/state.js";
 import {
   selectStorageStrategy,
   type StrategySelection,
@@ -34,6 +35,7 @@ export class HyperionWorkspace {
   private readonly ignoreMatcher: IgnoreMatcher;
   private readonly environmentProfile: EnvironmentProfile;
   private readonly strategySelection: StrategySelection;
+  private readonly stateEngine: HybridStateEngine;
   private readonly manualTrackedPaths = new Set<string>();
   private sessionDeviceInfo?: SessionDeviceInfo;
   private fsInterceptorInstalled = false;
@@ -50,6 +52,9 @@ export class HyperionWorkspace {
     });
     this.strategySelection = selectStorageStrategy(config, this.environmentProfile);
     this.strategy = this.strategySelection.kind;
+    this.stateEngine = new HybridStateEngine(config, {
+      gitAvailableHint: this.environmentProfile.gitAvailable,
+    });
   }
 
   public track(pathOrPaths: string | string[]): void {
