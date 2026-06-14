@@ -40,11 +40,17 @@ type CallbackApiName =
 
 type FsApiName = SyncApiName | CallbackApiName;
 
-type MutableFsModule = Record<FsApiName, (...args: unknown[]) => unknown>;
+type PromiseApiName = CallbackApiName;
+
+type MutableFsModule = Record<FsApiName, (...args: unknown[]) => unknown> & {
+  promises: MutablePromiseFsModule;
+};
+type MutablePromiseFsModule = Record<PromiseApiName, (...args: unknown[]) => unknown>;
 
 export class VfsInterceptor {
   private readonly fsModule = require("node:fs") as MutableFsModule;
-  private readonly originals = new Map<FsApiName, (...args: unknown[]) => unknown>();
+  private readonly fsPromisesModule = require("node:fs/promises") as MutablePromiseFsModule;
+  private readonly restoreOriginals: Array<() => void> = [];
   private installed = false;
 
   public constructor(private readonly hooks: VfsInterceptorHooks) {}
@@ -96,6 +102,27 @@ export class VfsInterceptor {
     this.patchCallback("chmod", (args) => [{ pathLike: args[0], kind: "metadata" }]);
     this.patchCallback("utimes", (args) => [{ pathLike: args[0], kind: "metadata" }]);
 
+    this.patchPromiseModules("writeFile", (args) => [
+      { pathLike: args[0], kind: "write", fileTypeHint: "file" },
+    ]);
+    this.patchPromiseModules("appendFile", (args) => [
+      { pathLike: args[0], kind: "write", fileTypeHint: "file" },
+    ]);
+    this.patchPromiseModules("rename", (args) => [
+      { pathLike: args[0], kind: "delete" },
+      { pathLike: args[1], kind: "write" },
+    ]);
+    this.patchPromiseModules("unlink", (args) => [{ pathLike: args[0], kind: "delete" }]);
+    this.patchPromiseModules("rm", (args) => [{ pathLike: args[0], kind: "delete" }]);
+    this.patchPromiseModules("mkdir", (args) => [
+      { pathLike: args[0], kind: "mkdir", fileTypeHint: "directory" },
+    ]);
+    this.patchPromiseModules("copyFile", (args) => [
+      { pathLike: args[1], kind: "write", fileTypeHint: "file" },
+    ]);
+    this.patchPromiseModules("chmod", (args) => [{ pathLike: args[0], kind: "metadata" }]);
+    this.patchPromiseModules("utimes", (args) => [{ pathLike: args[0], kind: "metadata" }]);
+
     this.installed = true;
   }
 
@@ -104,11 +131,11 @@ export class VfsInterceptor {
       return;
     }
 
-    for (const [apiName, original] of this.originals) {
-      this.fsModule[apiName] = original;
+    for (const restoreOriginal of this.restoreOriginals) {
+      restoreOriginal();
     }
 
-    this.originals.clear();
+    this.restoreOriginals.length = 0;
     this.installed = false;
   }
 
@@ -121,7 +148,9 @@ export class VfsInterceptor {
     getRecords: (args: unknown[]) => VfsMutationRecord[],
   ): void {
     const original = this.fsModule[apiName];
-    this.originals.set(apiName, original);
+    this.restoreOriginals.push(() => {
+      this.fsModule[apiName] = original;
+    });
 
     this.fsModule[apiName] = (...args: unknown[]) => {
       this.hooks.beforeMutation(getRecords(args));
@@ -134,7 +163,9 @@ export class VfsInterceptor {
     getRecords: (args: unknown[]) => VfsMutationRecord[],
   ): void {
     const original = this.fsModule[apiName];
-    this.originals.set(apiName, original);
+    this.restoreOriginals.push(() => {
+      this.fsModule[apiName] = original;
+    });
 
     this.fsModule[apiName] = (...args: unknown[]) => {
       if (typeof args.at(-1) === "function") {
@@ -142,6 +173,38 @@ export class VfsInterceptor {
       }
 
       return original.apply(this.fsModule, args);
+    };
+  }
+
+  private patchPromiseModules(
+    apiName: PromiseApiName,
+    getRecords: (args: unknown[]) => VfsMutationRecord[],
+  ): void {
+    const patchedTargets = new Set<MutablePromiseFsModule>();
+
+    for (const target of [this.fsModule.promises, this.fsPromisesModule]) {
+      if (patchedTargets.has(target)) {
+        continue;
+      }
+
+      patchedTargets.add(target);
+      this.patchPromise(target, apiName, getRecords);
+    }
+  }
+
+  private patchPromise(
+    target: MutablePromiseFsModule,
+    apiName: PromiseApiName,
+    getRecords: (args: unknown[]) => VfsMutationRecord[],
+  ): void {
+    const original = target[apiName];
+    this.restoreOriginals.push(() => {
+      target[apiName] = original;
+    });
+
+    target[apiName] = (...args: unknown[]) => {
+      this.hooks.beforeMutation(getRecords(args));
+      return original.apply(target, args);
     };
   }
 }

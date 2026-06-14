@@ -15,6 +15,10 @@ function getCommonJsFs(): typeof import("node:fs") {
   return require("node:fs") as typeof import("node:fs");
 }
 
+function getCommonJsFsPromises(): typeof import("node:fs/promises") {
+  return require("node:fs/promises") as typeof import("node:fs/promises");
+}
+
 function createTempWorkspace(): string {
   const root = mkdtempSync(path.join(tmpdir(), "hyperion-vfs-"));
   tempRoots.push(root);
@@ -423,5 +427,183 @@ describe("VFS interceptor callback APIs", () => {
 
     assert.throws(() => invalidWriteFile(path.join(root, "invalid.txt"), "data"), TypeError);
     assert.equal(getWorkspaceCheckpoint(workspace, checkpointId)?.dirty.size, 0);
+  });
+});
+
+describe("VFS interceptor fs/promises APIs", () => {
+  it("auto-registers promise writeFile mutations as VFS dirty entries", async () => {
+    const root = createTempWorkspace();
+    const workspace = createWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    const fsPromises = getCommonJsFsPromises();
+
+    workspace.installFsInterceptor();
+    await fsPromises.writeFile(path.join(root, "created.txt"), "created");
+
+    const dirtyEntry = getWorkspaceCheckpoint(workspace, checkpointId)?.dirty.get("created.txt");
+    assert.equal(dirtyEntry?.capturedBy, "vfs");
+    assert.equal(dirtyEntry?.kind, "created");
+  });
+
+  it("backs up modified files before promise writes so rollback restores original content", async () => {
+    const root = createTempWorkspace();
+    const sourcePath = path.join(root, "source.txt");
+    writeFileSync(sourcePath, "original");
+    const workspace = createWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    const fsPromises = getCommonJsFsPromises();
+
+    workspace.installFsInterceptor();
+    await fsPromises.writeFile(sourcePath, "mutated");
+
+    await workspace.rollback(checkpointId);
+
+    assert.equal(readFileSync(sourcePath, "utf8"), "original");
+  });
+
+  it("backs up deleted files before promise unlink and rm so rollback recreates them", async () => {
+    const root = createTempWorkspace();
+    const unlinkPath = path.join(root, "unlink.txt");
+    const rmPath = path.join(root, "rm.txt");
+    writeFileSync(unlinkPath, "unlink original");
+    writeFileSync(rmPath, "rm original");
+    const workspace = createWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    const fsPromises = getCommonJsFsPromises();
+
+    workspace.installFsInterceptor();
+    await fsPromises.unlink(unlinkPath);
+    await fsPromises.rm(rmPath);
+
+    await workspace.rollback(checkpointId);
+
+    assert.equal(readFileSync(unlinkPath, "utf8"), "unlink original");
+    assert.equal(readFileSync(rmPath, "utf8"), "rm original");
+  });
+
+  it("removes files created through promise writeFile during rollback", async () => {
+    const root = createTempWorkspace();
+    const workspace = createWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    const createdPath = path.join(root, "created.txt");
+    const fsPromises = getCommonJsFsPromises();
+
+    workspace.installFsInterceptor();
+    await fsPromises.writeFile(createdPath, "created");
+
+    await workspace.rollback(checkpointId);
+
+    assert.equal(existsSync(createdPath), false);
+  });
+
+  it("records appendFile, chmod, utimes, and mkdir promise mutations", async () => {
+    const root = createTempWorkspace();
+    const sourcePath = path.join(root, "source.txt");
+    writeFileSync(sourcePath, "original");
+    const workspace = createWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    const fsPromises = getCommonJsFsPromises();
+
+    workspace.installFsInterceptor();
+    await fsPromises.appendFile(sourcePath, "\nappended");
+    await fsPromises.chmod(sourcePath, 0o666);
+    await fsPromises.utimes(sourcePath, new Date(), new Date());
+    await fsPromises.mkdir(path.join(root, "scratch"));
+
+    const checkpoint = getWorkspaceCheckpoint(workspace, checkpointId);
+    assert.equal(checkpoint?.dirty.get("source.txt")?.capturedBy, "vfs");
+    assert.equal(checkpoint?.dirty.get("scratch")?.capturedBy, "vfs");
+    assert.equal(checkpoint?.dirty.get("scratch")?.fileType, "directory");
+  });
+
+  it("records promise rename source and destination and rolls both back", async () => {
+    const root = createTempWorkspace();
+    const oldPath = path.join(root, "old.txt");
+    const newPath = path.join(root, "new.txt");
+    writeFileSync(oldPath, "original");
+    const workspace = createWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    const fsPromises = getCommonJsFsPromises();
+
+    workspace.installFsInterceptor();
+    await fsPromises.rename(oldPath, newPath);
+
+    const checkpoint = getWorkspaceCheckpoint(workspace, checkpointId);
+    assert.equal(checkpoint?.dirty.get("old.txt")?.capturedBy, "vfs");
+    assert.equal(checkpoint?.dirty.get("new.txt")?.capturedBy, "vfs");
+
+    await workspace.rollback(checkpointId);
+
+    assert.equal(readFileSync(oldPath, "utf8"), "original");
+    assert.equal(existsSync(newPath), false);
+  });
+
+  it("records promise copyFile destination and removes it during rollback", async () => {
+    const root = createTempWorkspace();
+    const sourcePath = path.join(root, "source.txt");
+    const copyPath = path.join(root, "copy.txt");
+    writeFileSync(sourcePath, "original");
+    const workspace = createWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    const fsPromises = getCommonJsFsPromises();
+
+    workspace.installFsInterceptor();
+    await fsPromises.copyFile(sourcePath, copyPath);
+
+    assert.equal(getWorkspaceCheckpoint(workspace, checkpointId)?.dirty.get("copy.txt")?.capturedBy, "vfs");
+
+    await workspace.rollback(checkpointId);
+
+    assert.equal(readFileSync(sourcePath, "utf8"), "original");
+    assert.equal(existsSync(copyPath), false);
+  });
+
+  it("ignores configured ignored paths and outside-workspace promise writes", async () => {
+    const root = createTempWorkspace();
+    const outsideRoot = mkdtempSync(path.join(tmpdir(), "hyperion-vfs-outside-"));
+    tempRoots.push(outsideRoot);
+    const workspace = createWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    const fsPromises = getCommonJsFsPromises();
+
+    workspace.installFsInterceptor();
+    await fsPromises.mkdir(path.join(root, "node_modules", "pkg"), { recursive: true });
+    await fsPromises.writeFile(path.join(root, "node_modules", "pkg", "index.js"), "ignored");
+    await fsPromises.writeFile(path.join(outsideRoot, "outside.txt"), "outside");
+
+    assert.equal(getWorkspaceCheckpoint(workspace, checkpointId)?.dirty.size, 0);
+  });
+
+  it("preserves promise rejection behavior from the original function", async () => {
+    const root = createTempWorkspace();
+    const workspace = createWorkspace(root);
+    await workspace.snapshot();
+    const fsPromises = getCommonJsFsPromises();
+
+    workspace.installFsInterceptor();
+
+    await assert.rejects(
+      () => fsPromises.unlink(path.join(root, "missing.txt")),
+      (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
+    );
+  });
+
+  it("restores fs.promises and node:fs/promises functions on uninstall", () => {
+    const root = createTempWorkspace();
+    const workspace = createWorkspace(root);
+    const fs = getCommonJsFs();
+    const fsPromises = getCommonJsFsPromises();
+    const originalFsPromisesWriteFile = fs.promises.writeFile;
+    const originalNodeFsPromisesWriteFile = fsPromises.writeFile;
+
+    workspace.installFsInterceptor();
+
+    assert.notEqual(fs.promises.writeFile, originalFsPromisesWriteFile);
+    assert.notEqual(fsPromises.writeFile, originalNodeFsPromisesWriteFile);
+
+    workspace.uninstallFsInterceptor();
+
+    assert.equal(fs.promises.writeFile, originalFsPromisesWriteFile);
+    assert.equal(fsPromises.writeFile, originalNodeFsPromisesWriteFile);
   });
 });
