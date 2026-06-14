@@ -12,13 +12,14 @@ import { GhostDirectoryCleaner } from "./internal/ghost-directory-cleaner.js";
 import { createIgnoreMatcher, type IgnoreMatcher } from "./internal/ignore.js";
 import { isPathInsideRoot, normalizeWorkspacePath } from "./internal/path.js";
 import { PureManifestStrategy } from "./internal/pure-manifest-strategy.js";
+import { ReconciliationEngine } from "./internal/reconciliation-engine.js";
 import { RollbackEngine } from "./internal/rollback-engine.js";
 import {
   ensureSessionRoot,
   probeSessionDeviceInfo,
   type SessionDeviceInfo,
 } from "./internal/session.js";
-import { diffStateManifests, HybridStateEngine } from "./internal/state.js";
+import { HybridStateEngine } from "./internal/state.js";
 import {
   selectStorageStrategy,
   type StrategySelection,
@@ -43,6 +44,7 @@ export class HyperionWorkspace {
   private readonly checkpointStore: CheckpointStore;
   private readonly checkpointStorage = new Map<CheckpointId, PureManifestStrategy>();
   private readonly rollbackEngine = new RollbackEngine();
+  private readonly reconciliationEngine = new ReconciliationEngine();
   private readonly manualTrackedPaths = new Set<string>();
   private sessionDeviceInfo?: SessionDeviceInfo;
   private fsInterceptorInstalled = false;
@@ -125,7 +127,11 @@ export class HyperionWorkspace {
   }
 
   public async reconcile(checkpointId?: CheckpointId): Promise<ReconcileResult> {
-    if (!checkpointId) {
+    const checkpoint = checkpointId
+      ? this.requireActiveCheckpoint(checkpointId)
+      : this.checkpointStore.getMostRecentActiveCheckpoint();
+
+    if (!checkpoint) {
       return {
         created: [],
         modified: [],
@@ -134,26 +140,8 @@ export class HyperionWorkspace {
       };
     }
 
-    const checkpoint = this.requireKnownCheckpoint(checkpointId);
     const currentManifest = this.stateEngine.captureManifest();
-    const diff = diffStateManifests(checkpoint.baseline, currentManifest);
-
-    for (const entry of [
-      ...diff.created,
-      ...diff.modified,
-      ...diff.deleted,
-      ...diff.metadata,
-    ]) {
-      checkpoint.dirty.set(entry.relativePath, entry);
-    }
-
-    return {
-      checkpointId,
-      created: diff.created.map((entry) => entry.relativePath),
-      modified: [...diff.modified, ...diff.metadata].map((entry) => entry.relativePath),
-      deleted: diff.deleted.map((entry) => entry.relativePath),
-      renamed: [],
-    };
+    return this.reconciliationEngine.reconcile({ checkpoint, currentManifest });
   }
 
   public async dispose(): Promise<void> {

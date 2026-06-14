@@ -74,6 +74,18 @@ export class CheckpointStore {
     return this.checkpoints.get(checkpointId);
   }
 
+  public getMostRecentActiveCheckpoint(): StoredCheckpoint | undefined {
+    let mostRecentCheckpoint: StoredCheckpoint | undefined;
+
+    for (const checkpoint of this.checkpoints.values()) {
+      if (checkpoint.status === "active" || checkpoint.status === "rolling-back") {
+        mostRecentCheckpoint = checkpoint;
+      }
+    }
+
+    return mostRecentCheckpoint;
+  }
+
   public markCheckpointDisposed(checkpointId: CheckpointId): void {
     const checkpoint = this.checkpoints.get(checkpointId);
 

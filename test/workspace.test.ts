@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -101,6 +102,13 @@ function backupWorkspaceCheckpointPath(
       backupCheckpointPath(checkpointId: CheckpointId, pathOrPathLike: string): void;
     }
   ).backupCheckpointPath(checkpointId, pathOrPathLike);
+}
+
+function runChildProcessScript(root: string, script: string): void {
+  execFileSync(process.execPath, ["-e", script], {
+    cwd: root,
+    stdio: "ignore",
+  });
 }
 
 afterEach(() => {
@@ -383,6 +391,112 @@ describe("HyperionWorkspace", () => {
     await assert.rejects(() => workspace.snapshot(), HyperionError);
   });
 
+  it("reconciles child-process created, modified, and deleted paths", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const modifiedPath = join(root, "modified.txt");
+    const deletedPath = join(root, "deleted.txt");
+    writeFileSync(modifiedPath, "original");
+    writeFileSync(deletedPath, "remove me");
+    const checkpointId = await workspace.snapshot();
+
+    runChildProcessScript(
+      root,
+      [
+        "const fs = require('node:fs');",
+        `fs.writeFileSync(${JSON.stringify(join(root, "child-created.txt"))}, "created");`,
+        `fs.writeFileSync(${JSON.stringify(modifiedPath)}, "mutated content");`,
+        `fs.rmSync(${JSON.stringify(deletedPath)}, { force: true });`,
+      ].join("\n"),
+    );
+
+    const result = await workspace.reconcile(checkpointId);
+    const checkpoint = getWorkspaceCheckpoint(workspace, checkpointId);
+
+    assert.equal(result.created.includes("child-created.txt"), true);
+    assert.equal(result.modified.includes("modified.txt"), true);
+    assert.equal(result.deleted.includes("deleted.txt"), true);
+    assert.equal(checkpoint?.dirty.has("child-created.txt"), true);
+    assert.equal(checkpoint?.dirty.has("modified.txt"), true);
+    assert.equal(checkpoint?.dirty.has("deleted.txt"), true);
+  });
+
+  it("reconciles the most recent active checkpoint when no checkpoint id is provided", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const firstId = await workspace.snapshot();
+    const secondId = await workspace.snapshot();
+    writeFileSync(join(root, "latest-created.txt"), "created");
+
+    const result = await workspace.reconcile();
+
+    assert.equal(result.checkpointId, secondId);
+    assert.equal(result.created.includes("latest-created.txt"), true);
+    assert.equal(getWorkspaceCheckpoint(workspace, firstId)?.dirty.has("latest-created.txt"), false);
+    assert.equal(getWorkspaceCheckpoint(workspace, secondId)?.dirty.has("latest-created.txt"), true);
+  });
+
+  it("keeps reconciliation idempotent for repeated captures", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    writeFileSync(join(root, "created-once.txt"), "created");
+
+    await workspace.reconcile(checkpointId);
+    const firstEntry = getWorkspaceCheckpoint(workspace, checkpointId)?.dirty.get("created-once.txt");
+    await workspace.reconcile(checkpointId);
+    const checkpoint = getWorkspaceCheckpoint(workspace, checkpointId);
+    const secondEntry = checkpoint?.dirty.get("created-once.txt");
+
+    assert.equal(checkpoint?.dirty.size, 1);
+    assert.equal(secondEntry?.firstSeenAt, firstEntry?.firstSeenAt);
+    assert.equal(secondEntry?.capturedBy, "reconcile");
+  });
+
+  it("ignores child-process writes under default ignored directories", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+
+    runChildProcessScript(
+      root,
+      [
+        "const fs = require('node:fs');",
+        `fs.mkdirSync(${JSON.stringify(join(root, "node_modules", "pkg"))}, { recursive: true });`,
+        `fs.mkdirSync(${JSON.stringify(join(root, ".git"))}, { recursive: true });`,
+        `fs.mkdirSync(${JSON.stringify(join(root, ".hyperion", "scratch"))}, { recursive: true });`,
+        `fs.writeFileSync(${JSON.stringify(join(root, "node_modules", "pkg", "index.js"))}, "ignored");`,
+        `fs.writeFileSync(${JSON.stringify(join(root, ".git", "config"))}, "ignored");`,
+        `fs.writeFileSync(${JSON.stringify(join(root, ".hyperion", "scratch", "file.txt"))}, "ignored");`,
+      ].join("\n"),
+    );
+
+    assert.deepEqual(await workspace.reconcile(checkpointId), {
+      checkpointId,
+      created: [],
+      modified: [],
+      deleted: [],
+      renamed: [],
+    });
+    assert.equal(getWorkspaceCheckpoint(workspace, checkpointId)?.dirty.size, 0);
+  });
+
+  it("removes reconciled dirty entries after a created path returns to baseline", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    const createdPath = join(root, "created-then-removed.txt");
+
+    writeFileSync(createdPath, "created");
+    await workspace.reconcile(checkpointId);
+    assert.equal(getWorkspaceCheckpoint(workspace, checkpointId)?.dirty.has("created-then-removed.txt"), true);
+
+    rmSync(createdPath, { force: true });
+    await workspace.reconcile(checkpointId);
+
+    assert.equal(getWorkspaceCheckpoint(workspace, checkpointId)?.dirty.has("created-then-removed.txt"), false);
+  });
+
   it("deletes files created after snapshot during rollback", async () => {
     const root = createTempWorkspace();
     const workspace = new HyperionWorkspace(root);
@@ -461,6 +575,22 @@ describe("HyperionWorkspace", () => {
     assert.equal(getWorkspaceCheckpoint(workspace, checkpointId)?.dirty.has("created.txt"), true);
   });
 
+  it("rolls back child-process created files without an explicit reconcile call", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    const createdPath = join(root, "external-created.txt");
+
+    runChildProcessScript(
+      root,
+      `require('node:fs').writeFileSync(${JSON.stringify(createdPath)}, "created");`,
+    );
+
+    await workspace.rollback(checkpointId);
+
+    assert.equal(existsSync(createdPath), false);
+  });
+
   it("rejects concurrent rollback on the same checkpoint and releases the lock", async () => {
     const root = createTempWorkspace();
     const workspace = new HyperionWorkspace(root);
@@ -513,7 +643,7 @@ describe("HyperionWorkspace", () => {
     await assert.rejects(() => workspace.rollback(checkpointId), HyperionRollbackError);
   });
 
-  it("returns an empty reconcile result without a checkpoint during Phase 1A", async () => {
+  it("returns an empty reconcile result without an active checkpoint", async () => {
     const root = createTempWorkspace();
     const workspace = new HyperionWorkspace(root);
 
