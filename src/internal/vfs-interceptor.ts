@@ -27,11 +27,24 @@ type SyncApiName =
   | "chmodSync"
   | "utimesSync";
 
-type MutableFsModule = Record<SyncApiName, (...args: unknown[]) => unknown>;
+type CallbackApiName =
+  | "writeFile"
+  | "appendFile"
+  | "rename"
+  | "unlink"
+  | "rm"
+  | "mkdir"
+  | "copyFile"
+  | "chmod"
+  | "utimes";
+
+type FsApiName = SyncApiName | CallbackApiName;
+
+type MutableFsModule = Record<FsApiName, (...args: unknown[]) => unknown>;
 
 export class VfsInterceptor {
   private readonly fsModule = require("node:fs") as MutableFsModule;
-  private readonly originals = new Map<SyncApiName, (...args: unknown[]) => unknown>();
+  private readonly originals = new Map<FsApiName, (...args: unknown[]) => unknown>();
   private installed = false;
 
   public constructor(private readonly hooks: VfsInterceptorHooks) {}
@@ -41,26 +54,47 @@ export class VfsInterceptor {
       return;
     }
 
-    this.patch("writeFileSync", (args) => [
+    this.patchSync("writeFileSync", (args) => [
       { pathLike: args[0], kind: "write", fileTypeHint: "file" },
     ]);
-    this.patch("appendFileSync", (args) => [
+    this.patchSync("appendFileSync", (args) => [
       { pathLike: args[0], kind: "write", fileTypeHint: "file" },
     ]);
-    this.patch("renameSync", (args) => [
+    this.patchSync("renameSync", (args) => [
       { pathLike: args[0], kind: "delete" },
       { pathLike: args[1], kind: "write" },
     ]);
-    this.patch("unlinkSync", (args) => [{ pathLike: args[0], kind: "delete" }]);
-    this.patch("rmSync", (args) => [{ pathLike: args[0], kind: "delete" }]);
-    this.patch("mkdirSync", (args) => [
+    this.patchSync("unlinkSync", (args) => [{ pathLike: args[0], kind: "delete" }]);
+    this.patchSync("rmSync", (args) => [{ pathLike: args[0], kind: "delete" }]);
+    this.patchSync("mkdirSync", (args) => [
       { pathLike: args[0], kind: "mkdir", fileTypeHint: "directory" },
     ]);
-    this.patch("copyFileSync", (args) => [
+    this.patchSync("copyFileSync", (args) => [
       { pathLike: args[1], kind: "write", fileTypeHint: "file" },
     ]);
-    this.patch("chmodSync", (args) => [{ pathLike: args[0], kind: "metadata" }]);
-    this.patch("utimesSync", (args) => [{ pathLike: args[0], kind: "metadata" }]);
+    this.patchSync("chmodSync", (args) => [{ pathLike: args[0], kind: "metadata" }]);
+    this.patchSync("utimesSync", (args) => [{ pathLike: args[0], kind: "metadata" }]);
+
+    this.patchCallback("writeFile", (args) => [
+      { pathLike: args[0], kind: "write", fileTypeHint: "file" },
+    ]);
+    this.patchCallback("appendFile", (args) => [
+      { pathLike: args[0], kind: "write", fileTypeHint: "file" },
+    ]);
+    this.patchCallback("rename", (args) => [
+      { pathLike: args[0], kind: "delete" },
+      { pathLike: args[1], kind: "write" },
+    ]);
+    this.patchCallback("unlink", (args) => [{ pathLike: args[0], kind: "delete" }]);
+    this.patchCallback("rm", (args) => [{ pathLike: args[0], kind: "delete" }]);
+    this.patchCallback("mkdir", (args) => [
+      { pathLike: args[0], kind: "mkdir", fileTypeHint: "directory" },
+    ]);
+    this.patchCallback("copyFile", (args) => [
+      { pathLike: args[1], kind: "write", fileTypeHint: "file" },
+    ]);
+    this.patchCallback("chmod", (args) => [{ pathLike: args[0], kind: "metadata" }]);
+    this.patchCallback("utimes", (args) => [{ pathLike: args[0], kind: "metadata" }]);
 
     this.installed = true;
   }
@@ -82,7 +116,7 @@ export class VfsInterceptor {
     return this.installed;
   }
 
-  private patch(
+  private patchSync(
     apiName: SyncApiName,
     getRecords: (args: unknown[]) => VfsMutationRecord[],
   ): void {
@@ -91,6 +125,22 @@ export class VfsInterceptor {
 
     this.fsModule[apiName] = (...args: unknown[]) => {
       this.hooks.beforeMutation(getRecords(args));
+      return original.apply(this.fsModule, args);
+    };
+  }
+
+  private patchCallback(
+    apiName: CallbackApiName,
+    getRecords: (args: unknown[]) => VfsMutationRecord[],
+  ): void {
+    const original = this.fsModule[apiName];
+    this.originals.set(apiName, original);
+
+    this.fsModule[apiName] = (...args: unknown[]) => {
+      if (typeof args.at(-1) === "function") {
+        this.hooks.beforeMutation(getRecords(args));
+      }
+
       return original.apply(this.fsModule, args);
     };
   }
