@@ -1,9 +1,10 @@
 import { existsSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { DEFAULT_IGNORED_PATTERNS, DEFAULT_MAX_CONCURRENT_CHECKPOINTS } from "./constants.js";
 import { HyperionError, HyperionPathError, HyperionRollbackError } from "./errors.js";
-import { CheckpointStore } from "./internal/checkpoint-store.js";
+import { CheckpointStore, type StoredCheckpoint } from "./internal/checkpoint-store.js";
 import {
   discoverEnvironmentProfile,
   type EnvironmentProfile,
@@ -24,11 +25,14 @@ import {
   selectStorageStrategy,
   type StrategySelection,
 } from "./internal/strategy.js";
+import { VfsInterceptor, type VfsMutationRecord } from "./internal/vfs-interceptor.js";
 import type {
   CheckpointId,
+  DirtyEntry,
   HyperionConfig,
   ReconcileResult,
   ResolvedHyperionConfig,
+  StatLedgerEntry,
   StorageStrategyKind,
 } from "./types.js";
 
@@ -45,9 +49,9 @@ export class HyperionWorkspace {
   private readonly checkpointStorage = new Map<CheckpointId, PureManifestStrategy>();
   private readonly rollbackEngine = new RollbackEngine();
   private readonly reconciliationEngine = new ReconciliationEngine();
+  private readonly vfsInterceptor: VfsInterceptor;
   private readonly manualTrackedPaths = new Set<string>();
   private sessionDeviceInfo?: SessionDeviceInfo;
-  private fsInterceptorInstalled = false;
   private disposed = false;
 
   public constructor(rootOrConfig: string | HyperionConfig) {
@@ -65,6 +69,11 @@ export class HyperionWorkspace {
       gitAvailableHint: this.environmentProfile.gitAvailable,
     });
     this.checkpointStore = new CheckpointStore(config);
+    this.vfsInterceptor = new VfsInterceptor({
+      beforeMutation: (records) => {
+        this.recordVfsMutations(records);
+      },
+    });
   }
 
   public track(pathOrPaths: string | string[]): void {
@@ -145,10 +154,10 @@ export class HyperionWorkspace {
   }
 
   public async dispose(): Promise<void> {
+    this.uninstallFsInterceptor();
     this.checkpointStore.clear();
     this.checkpointStorage.clear();
     this.disposed = true;
-    this.fsInterceptorInstalled = false;
   }
 
   public installFsInterceptor(): void {
@@ -156,15 +165,15 @@ export class HyperionWorkspace {
       throw new HyperionError("Cannot install fs interceptor after dispose()");
     }
 
-    this.fsInterceptorInstalled = true;
+    this.vfsInterceptor.install();
   }
 
   public uninstallFsInterceptor(): void {
-    this.fsInterceptorInstalled = false;
+    this.vfsInterceptor.uninstall();
   }
 
   public get isFsInterceptorInstalled(): boolean {
-    return this.fsInterceptorInstalled;
+    return this.vfsInterceptor.isInstalled;
   }
 
   public get isDisposed(): boolean {
@@ -234,6 +243,82 @@ export class HyperionWorkspace {
     this.requireCheckpointStorage(checkpointId).backupFile(pathOrPathLike);
   }
 
+  private recordVfsMutations(records: VfsMutationRecord[]): void {
+    const checkpoint = this.checkpointStore.getMostRecentActiveCheckpoint();
+
+    if (!checkpoint) {
+      return;
+    }
+
+    const storage = this.checkpointStorage.get(checkpoint.id);
+
+    if (!storage) {
+      return;
+    }
+
+    for (const record of records) {
+      const relativePath = this.normalizeVfsPath(record.pathLike);
+
+      if (!relativePath || this.ignoreMatcher.matches(relativePath)) {
+        continue;
+      }
+
+      storage.backupFile(relativePath);
+      checkpoint.dirty.set(
+        relativePath,
+        this.createVfsDirtyEntry(checkpoint, relativePath, record),
+      );
+    }
+  }
+
+  private normalizeVfsPath(pathLike: unknown): string | undefined {
+    try {
+      if (typeof pathLike === "string") {
+        return normalizeWorkspacePath(this.root, pathLike);
+      }
+
+      if (Buffer.isBuffer(pathLike)) {
+        return normalizeWorkspacePath(this.root, pathLike.toString());
+      }
+
+      if (pathLike instanceof URL) {
+        return normalizeWorkspacePath(this.root, fileURLToPath(pathLike));
+      }
+    } catch {
+      return undefined;
+    }
+
+    return undefined;
+  }
+
+  private createVfsDirtyEntry(
+    checkpoint: StoredCheckpoint,
+    relativePath: string,
+    record: VfsMutationRecord,
+  ): DirtyEntry {
+    const now = Date.now();
+    const existingEntry = checkpoint.dirty.get(relativePath);
+    const baselineEntry = checkpoint.baseline.statEntries.get(relativePath);
+    const dirtyEntry: DirtyEntry = {
+      relativePath,
+      kind: inferVfsDirtyKind(record, baselineEntry),
+      fileType: baselineEntry?.type ?? record.fileTypeHint ?? "unknown",
+      capturedBy: "vfs",
+      firstSeenAt: existingEntry?.firstSeenAt ?? now,
+      lastSeenAt: now,
+    };
+
+    if (baselineEntry) {
+      dirtyEntry.before = baselineEntry;
+    }
+
+    if (existingEntry?.after) {
+      dirtyEntry.after = existingEntry.after;
+    }
+
+    return dirtyEntry;
+  }
+
   private get activeCheckpointCount(): number {
     return this.checkpointStore.activeCount;
   }
@@ -273,4 +358,23 @@ export class HyperionWorkspace {
 
     return storage;
   }
+}
+
+function inferVfsDirtyKind(
+  record: VfsMutationRecord,
+  baselineEntry: StatLedgerEntry | undefined,
+): DirtyEntry["kind"] {
+  if (!baselineEntry) {
+    return "created";
+  }
+
+  if (record.kind === "delete") {
+    return "deleted";
+  }
+
+  if (record.kind === "metadata" || record.kind === "mkdir") {
+    return "metadata";
+  }
+
+  return "modified";
 }

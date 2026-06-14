@@ -41,6 +41,12 @@ export class PureManifestStrategy {
 
   public backupFile(pathOrPathLike: string): StorageBackupRecord {
     const relativePath = normalizeWorkspacePath(this.workspaceRoot, pathOrPathLike);
+    const existingRecord = this.backupRecords.get(relativePath);
+
+    if (existingRecord) {
+      return existingRecord;
+    }
+
     const sourcePath = this.toWorkspacePath(relativePath);
 
     if (!existsSync(sourcePath)) {
