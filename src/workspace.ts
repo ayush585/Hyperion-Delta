@@ -8,14 +8,17 @@ import {
   discoverEnvironmentProfile,
   type EnvironmentProfile,
 } from "./internal/environment.js";
+import { GhostDirectoryCleaner } from "./internal/ghost-directory-cleaner.js";
 import { createIgnoreMatcher, type IgnoreMatcher } from "./internal/ignore.js";
 import { isPathInsideRoot, normalizeWorkspacePath } from "./internal/path.js";
+import { PureManifestStrategy } from "./internal/pure-manifest-strategy.js";
+import { RollbackEngine } from "./internal/rollback-engine.js";
 import {
   ensureSessionRoot,
   probeSessionDeviceInfo,
   type SessionDeviceInfo,
 } from "./internal/session.js";
-import { HybridStateEngine } from "./internal/state.js";
+import { diffStateManifests, HybridStateEngine } from "./internal/state.js";
 import {
   selectStorageStrategy,
   type StrategySelection,
@@ -38,6 +41,8 @@ export class HyperionWorkspace {
   private readonly strategySelection: StrategySelection;
   private readonly stateEngine: HybridStateEngine;
   private readonly checkpointStore: CheckpointStore;
+  private readonly checkpointStorage = new Map<CheckpointId, PureManifestStrategy>();
+  private readonly rollbackEngine = new RollbackEngine();
   private readonly manualTrackedPaths = new Set<string>();
   private sessionDeviceInfo?: SessionDeviceInfo;
   private fsInterceptorInstalled = false;
@@ -91,29 +96,69 @@ export class HyperionWorkspace {
       baseline,
       deviceId: deviceInfo.workspaceDeviceId,
     });
+    this.checkpointStorage.set(
+      checkpoint.id,
+      new PureManifestStrategy(this.root, checkpoint.storageNamespace),
+    );
 
     return checkpoint.id;
   }
 
-  public async rollback(_checkpointId: CheckpointId): Promise<void> {
-    throw new HyperionRollbackError("rollback() is not implemented yet");
+  public async rollback(checkpointId: CheckpointId): Promise<void> {
+    this.assertNotDisposed("rollback()");
+    const checkpoint = this.requireActiveCheckpoint(checkpointId);
+    const storage = this.requireCheckpointStorage(checkpointId);
+    const ghostDirectoryCleaner = new GhostDirectoryCleaner({
+      workspaceRoot: this.root,
+      baseline: checkpoint.baseline,
+      ignoreMatcher: this.ignoreMatcher,
+    });
+
+    await this.rollbackEngine.rollback({
+      checkpoint,
+      storage,
+      ghostDirectoryCleaner,
+      reconcile: async () => {
+        await this.reconcile(checkpointId);
+      },
+    });
   }
 
   public async reconcile(checkpointId?: CheckpointId): Promise<ReconcileResult> {
-    if (checkpointId) {
-      throw new HyperionError("reconcile() is not implemented yet");
+    if (!checkpointId) {
+      return {
+        created: [],
+        modified: [],
+        deleted: [],
+        renamed: [],
+      };
+    }
+
+    const checkpoint = this.requireKnownCheckpoint(checkpointId);
+    const currentManifest = this.stateEngine.captureManifest();
+    const diff = diffStateManifests(checkpoint.baseline, currentManifest);
+
+    for (const entry of [
+      ...diff.created,
+      ...diff.modified,
+      ...diff.deleted,
+      ...diff.metadata,
+    ]) {
+      checkpoint.dirty.set(entry.relativePath, entry);
     }
 
     return {
-      created: [],
-      modified: [],
-      deleted: [],
+      checkpointId,
+      created: diff.created.map((entry) => entry.relativePath),
+      modified: [...diff.modified, ...diff.metadata].map((entry) => entry.relativePath),
+      deleted: diff.deleted.map((entry) => entry.relativePath),
       renamed: [],
     };
   }
 
   public async dispose(): Promise<void> {
     this.checkpointStore.clear();
+    this.checkpointStorage.clear();
     this.disposed = true;
     this.fsInterceptorInstalled = false;
   }
@@ -196,6 +241,11 @@ export class HyperionWorkspace {
     this.checkpointStore.markCheckpointDisposed(checkpointId);
   }
 
+  private backupCheckpointPath(checkpointId: CheckpointId, pathOrPathLike: string): void {
+    this.requireKnownCheckpoint(checkpointId);
+    this.requireCheckpointStorage(checkpointId).backupFile(pathOrPathLike);
+  }
+
   private get activeCheckpointCount(): number {
     return this.checkpointStore.activeCount;
   }
@@ -204,5 +254,35 @@ export class HyperionWorkspace {
     if (this.disposed) {
       throw new HyperionError(`Cannot call ${operation} after dispose()`);
     }
+  }
+
+  private requireKnownCheckpoint(checkpointId: CheckpointId) {
+    const checkpoint = this.checkpointStore.getCheckpoint(checkpointId);
+
+    if (!checkpoint) {
+      throw new HyperionRollbackError(`Unknown checkpoint: ${checkpointId}`);
+    }
+
+    return checkpoint;
+  }
+
+  private requireActiveCheckpoint(checkpointId: CheckpointId) {
+    const checkpoint = this.requireKnownCheckpoint(checkpointId);
+
+    if (checkpoint.status === "disposed") {
+      throw new HyperionRollbackError(`Checkpoint is already disposed: ${checkpointId}`);
+    }
+
+    return checkpoint;
+  }
+
+  private requireCheckpointStorage(checkpointId: CheckpointId): PureManifestStrategy {
+    const storage = this.checkpointStorage.get(checkpointId);
+
+    if (!storage) {
+      throw new HyperionRollbackError(`Missing storage for checkpoint: ${checkpointId}`);
+    }
+
+    return storage;
   }
 }

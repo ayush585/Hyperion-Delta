@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import assert from "node:assert/strict";
@@ -8,6 +8,7 @@ import {
   DEFAULT_IGNORED_PATTERNS,
   HyperionCapacityError,
   HyperionError,
+  HyperionIntegrityError,
   HyperionPathError,
   HyperionRollbackError,
   HyperionWorkspace,
@@ -88,6 +89,18 @@ function getActiveCheckpointCount(workspace: HyperionWorkspace): number {
       activeCheckpointCount: number;
     }
   ).activeCheckpointCount;
+}
+
+function backupWorkspaceCheckpointPath(
+  workspace: HyperionWorkspace,
+  checkpointId: CheckpointId,
+  pathOrPathLike: string,
+): void {
+  (
+    workspace as unknown as {
+      backupCheckpointPath(checkpointId: CheckpointId, pathOrPathLike: string): void;
+    }
+  ).backupCheckpointPath(checkpointId, pathOrPathLike);
 }
 
 afterEach(() => {
@@ -370,11 +383,134 @@ describe("HyperionWorkspace", () => {
     await assert.rejects(() => workspace.snapshot(), HyperionError);
   });
 
-  it("keeps rollback as an explicit unimplemented stub", async () => {
+  it("deletes files created after snapshot during rollback", async () => {
     const root = createTempWorkspace();
     const workspace = new HyperionWorkspace(root);
+    const unrelatedFile = join(root, "unrelated.txt");
+    writeFileSync(unrelatedFile, "safe");
+    const checkpointId = await workspace.snapshot();
+    const createdFile = join(root, "created.txt");
+    writeFileSync(createdFile, "created");
 
-    await assert.rejects(() => workspace.rollback("checkpoint"), HyperionRollbackError);
+    await workspace.rollback(checkpointId);
+
+    assert.equal(existsSync(createdFile), false);
+    assert.equal(readFileSync(unrelatedFile, "utf8"), "safe");
+    assert.equal(getWorkspaceCheckpoint(workspace, checkpointId)?.status, "disposed");
+  });
+
+  it("restores modified files when a backup record exists", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const sourcePath = join(root, "source.txt");
+    writeFileSync(sourcePath, "original");
+    const checkpointId = await workspace.snapshot();
+    backupWorkspaceCheckpointPath(workspace, checkpointId, "source.txt");
+    writeFileSync(sourcePath, "mutated");
+
+    await workspace.rollback(checkpointId);
+
+    assert.equal(readFileSync(sourcePath, "utf8"), "original");
+  });
+
+  it("recreates deleted files when a backup record exists", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const sourcePath = join(root, "source.txt");
+    writeFileSync(sourcePath, "original");
+    const checkpointId = await workspace.snapshot();
+    backupWorkspaceCheckpointPath(workspace, checkpointId, "source.txt");
+    rmSync(sourcePath, { force: true });
+
+    await workspace.rollback(checkpointId);
+
+    assert.equal(readFileSync(sourcePath, "utf8"), "original");
+  });
+
+  it("throws integrity errors for modified files without backup records", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const sourcePath = join(root, "source.txt");
+    writeFileSync(sourcePath, "original");
+    const checkpointId = await workspace.snapshot();
+    writeFileSync(sourcePath, "mutated");
+
+    await assert.rejects(() => workspace.rollback(checkpointId), HyperionIntegrityError);
+
+    const checkpoint = getWorkspaceCheckpoint(workspace, checkpointId);
+    assert.equal(checkpoint?.status, "active");
+    assert.equal(readFileSync(sourcePath, "utf8"), "mutated");
+  });
+
+  it("calls reconcile before rollback and records dirty entries", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    writeFileSync(join(root, "created.txt"), "created");
+    const originalReconcile = workspace.reconcile.bind(workspace);
+    let reconcileCalled = false;
+
+    workspace.reconcile = async (id?: CheckpointId) => {
+      reconcileCalled = true;
+      return originalReconcile(id);
+    };
+
+    await workspace.rollback(checkpointId);
+
+    assert.equal(reconcileCalled, true);
+    assert.equal(getWorkspaceCheckpoint(workspace, checkpointId)?.dirty.has("created.txt"), true);
+  });
+
+  it("rejects concurrent rollback on the same checkpoint and releases the lock", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    let releaseReconcile: (() => void) | undefined;
+    const reconcileGate = new Promise<void>((resolveGate) => {
+      releaseReconcile = resolveGate;
+    });
+
+    workspace.reconcile = async () => {
+      await reconcileGate;
+      return {
+        checkpointId,
+        created: [],
+        modified: [],
+        deleted: [],
+        renamed: [],
+      };
+    };
+
+    const firstRollback = workspace.rollback(checkpointId);
+    await assert.rejects(() => workspace.rollback(checkpointId), HyperionRollbackError);
+    releaseReconcile?.();
+    await firstRollback;
+
+    assert.equal(getWorkspaceCheckpoint(workspace, checkpointId)?.status, "disposed");
+  });
+
+  it("removes ghost directories bottom-up while preserving pre-existing parents", async () => {
+    const root = createTempWorkspace();
+    mkdirSync(join(root, "src"), { recursive: true });
+    const workspace = new HyperionWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    mkdirSync(join(root, "src", "scratch", "nested"), { recursive: true });
+    writeFileSync(join(root, "src", "scratch", "nested", "created.txt"), "created");
+
+    await workspace.rollback(checkpointId);
+
+    assert.equal(existsSync(join(root, "src", "scratch")), false);
+    assert.equal(existsSync(join(root, "src")), true);
+  });
+
+  it("rejects unknown and disposed checkpoint rollback", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+
+    await assert.rejects(() => workspace.rollback("missing-checkpoint"), HyperionRollbackError);
+    markWorkspaceCheckpointDisposed(workspace, checkpointId);
+    await assert.rejects(() => workspace.rollback(checkpointId), HyperionRollbackError);
   });
 
   it("returns an empty reconcile result without a checkpoint during Phase 1A", async () => {
