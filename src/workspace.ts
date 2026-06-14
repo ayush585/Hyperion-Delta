@@ -3,6 +3,7 @@ import { isAbsolute, join, resolve } from "node:path";
 
 import { DEFAULT_IGNORED_PATTERNS, DEFAULT_MAX_CONCURRENT_CHECKPOINTS } from "./constants.js";
 import { HyperionError, HyperionPathError, HyperionRollbackError } from "./errors.js";
+import { CheckpointStore } from "./internal/checkpoint-store.js";
 import {
   discoverEnvironmentProfile,
   type EnvironmentProfile,
@@ -36,6 +37,7 @@ export class HyperionWorkspace {
   private readonly environmentProfile: EnvironmentProfile;
   private readonly strategySelection: StrategySelection;
   private readonly stateEngine: HybridStateEngine;
+  private readonly checkpointStore: CheckpointStore;
   private readonly manualTrackedPaths = new Set<string>();
   private sessionDeviceInfo?: SessionDeviceInfo;
   private fsInterceptorInstalled = false;
@@ -55,6 +57,7 @@ export class HyperionWorkspace {
     this.stateEngine = new HybridStateEngine(config, {
       gitAvailableHint: this.environmentProfile.gitAvailable,
     });
+    this.checkpointStore = new CheckpointStore(config);
   }
 
   public track(pathOrPaths: string | string[]): void {
@@ -77,7 +80,19 @@ export class HyperionWorkspace {
   }
 
   public async snapshot(): Promise<CheckpointId> {
-    throw new HyperionError("snapshot() is not implemented yet");
+    this.assertNotDisposed("snapshot()");
+    this.checkpointStore.collectDisposed();
+    this.checkpointStore.ensureCapacityAvailable();
+    this.ensureSessionRoot();
+
+    const baseline = this.stateEngine.captureManifest();
+    const deviceInfo = this.probeSessionDeviceInfo();
+    const checkpoint = this.checkpointStore.createCheckpoint({
+      baseline,
+      deviceId: deviceInfo.workspaceDeviceId,
+    });
+
+    return checkpoint.id;
   }
 
   public async rollback(_checkpointId: CheckpointId): Promise<void> {
@@ -98,6 +113,7 @@ export class HyperionWorkspace {
   }
 
   public async dispose(): Promise<void> {
+    this.checkpointStore.clear();
     this.disposed = true;
     this.fsInterceptorInstalled = false;
   }
@@ -170,5 +186,23 @@ export class HyperionWorkspace {
     const deviceInfo = probeSessionDeviceInfo(this.root, this.ensureSessionRoot());
     this.sessionDeviceInfo = deviceInfo;
     return deviceInfo;
+  }
+
+  private getCheckpoint(checkpointId: CheckpointId) {
+    return this.checkpointStore.getCheckpoint(checkpointId);
+  }
+
+  private markCheckpointDisposed(checkpointId: CheckpointId): void {
+    this.checkpointStore.markCheckpointDisposed(checkpointId);
+  }
+
+  private get activeCheckpointCount(): number {
+    return this.checkpointStore.activeCount;
+  }
+
+  private assertNotDisposed(operation: string): void {
+    if (this.disposed) {
+      throw new HyperionError(`Cannot call ${operation} after dispose()`);
+    }
   }
 }

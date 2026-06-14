@@ -6,9 +6,13 @@ import { afterEach, describe, it } from "node:test";
 
 import {
   DEFAULT_IGNORED_PATTERNS,
+  HyperionCapacityError,
+  HyperionError,
   HyperionPathError,
   HyperionRollbackError,
   HyperionWorkspace,
+  type Checkpoint,
+  type CheckpointId,
 } from "../src/index.js";
 import { createIgnoreMatcher } from "../src/internal/ignore.js";
 import { normalizeWorkspacePath } from "../src/internal/path.js";
@@ -54,6 +58,36 @@ function probeWorkspaceSessionDeviceInfo(workspace: HyperionWorkspace): {
       };
     }
   ).probeSessionDeviceInfo();
+}
+
+function getWorkspaceCheckpoint(
+  workspace: HyperionWorkspace,
+  checkpointId: CheckpointId,
+): Checkpoint | undefined {
+  return (
+    workspace as unknown as {
+      getCheckpoint(checkpointId: CheckpointId): Checkpoint | undefined;
+    }
+  ).getCheckpoint(checkpointId);
+}
+
+function markWorkspaceCheckpointDisposed(
+  workspace: HyperionWorkspace,
+  checkpointId: CheckpointId,
+): void {
+  (
+    workspace as unknown as {
+      markCheckpointDisposed(checkpointId: CheckpointId): void;
+    }
+  ).markCheckpointDisposed(checkpointId);
+}
+
+function getActiveCheckpointCount(workspace: HyperionWorkspace): number {
+  return (
+    workspace as unknown as {
+      activeCheckpointCount: number;
+    }
+  ).activeCheckpointCount;
 }
 
 afterEach(() => {
@@ -250,11 +284,96 @@ describe("HyperionWorkspace", () => {
     });
   });
 
-  it("throws typed stubs for unimplemented snapshot and rollback", async () => {
+  it("creates a checkpoint when snapshot is called", async () => {
+    const root = createTempWorkspace();
+    writeFileSync(join(root, "source.ts"), "export const value = 1;\n");
+    const workspace = new HyperionWorkspace(root);
+
+    const checkpointId = await workspace.snapshot();
+    const checkpoint = getWorkspaceCheckpoint(workspace, checkpointId);
+
+    assert.equal(typeof checkpointId, "string");
+    assert.ok(checkpointId.length > 0);
+    assert.ok(checkpoint);
+    assert.equal(checkpoint.id, checkpointId);
+    assert.equal(checkpoint.status, "active");
+    assert.equal(checkpoint.baseline.statEntries.has("source.ts"), true);
+    assert.equal(checkpoint.storageNamespace, join(workspace.config.sessionRoot, checkpointId));
+    assert.equal(existsSync(workspace.config.sessionRoot), true);
+  });
+
+  it("keeps snapshot namespace allocation from touching unrelated files", async () => {
+    const root = createTempWorkspace();
+    const filePath = join(root, "source.ts");
+    writeFileSync(filePath, "original");
+    const workspace = new HyperionWorkspace(root);
+
+    await workspace.snapshot();
+
+    assert.equal(existsSync(filePath), true);
+    assert.equal(existsSync(join(root, ".hyperion", "checkpoints")), true);
+    assert.equal(existsSync(join(root, "source.ts", "unexpected")), false);
+  });
+
+  it("supports concurrent active checkpoints with isolated maps and namespaces", async () => {
+    const root = createTempWorkspace();
+    writeFileSync(join(root, "source.ts"), "export const value = 1;\n");
+    const workspace = new HyperionWorkspace(root);
+
+    const firstId = await workspace.snapshot();
+    const secondId = await workspace.snapshot();
+    const firstCheckpoint = getWorkspaceCheckpoint(workspace, firstId);
+    const secondCheckpoint = getWorkspaceCheckpoint(workspace, secondId);
+
+    assert.ok(firstCheckpoint);
+    assert.ok(secondCheckpoint);
+    assert.notEqual(firstId, secondId);
+    assert.notEqual(firstCheckpoint.storageNamespace, secondCheckpoint.storageNamespace);
+    assert.notStrictEqual(firstCheckpoint.baseline.gitIndexEntries, secondCheckpoint.baseline.gitIndexEntries);
+    assert.notStrictEqual(firstCheckpoint.baseline.statEntries, secondCheckpoint.baseline.statEntries);
+    assert.notStrictEqual(firstCheckpoint.dirty, secondCheckpoint.dirty);
+    assert.equal(getActiveCheckpointCount(workspace), 2);
+  });
+
+  it("enforces maxConcurrentCheckpoints and throws only after disposed checkpoints are collected", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace({
+      workspaceRoot: root,
+      maxConcurrentCheckpoints: 1,
+    });
+
+    const firstId = await workspace.snapshot();
+
+    await assert.rejects(() => workspace.snapshot(), HyperionCapacityError);
+
+    markWorkspaceCheckpointDisposed(workspace, firstId);
+    const secondId = await workspace.snapshot();
+
+    assert.notEqual(secondId, firstId);
+    assert.equal(getWorkspaceCheckpoint(workspace, firstId), undefined);
+    assert.ok(getWorkspaceCheckpoint(workspace, secondId));
+    assert.equal(getActiveCheckpointCount(workspace), 1);
+  });
+
+  it("clears checkpoints during dispose and rejects snapshots after disposal", async () => {
     const root = createTempWorkspace();
     const workspace = new HyperionWorkspace(root);
 
-    await assert.rejects(() => workspace.snapshot(), /snapshot\(\) is not implemented yet/);
+    const checkpointId = await workspace.snapshot();
+    assert.ok(getWorkspaceCheckpoint(workspace, checkpointId));
+
+    await workspace.dispose();
+    await workspace.dispose();
+
+    assert.equal(getWorkspaceCheckpoint(workspace, checkpointId), undefined);
+    assert.equal(getActiveCheckpointCount(workspace), 0);
+    await assert.rejects(() => workspace.snapshot(), HyperionError);
+  });
+
+  it("keeps rollback as an explicit unimplemented stub", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+
     await assert.rejects(() => workspace.rollback("checkpoint"), HyperionRollbackError);
   });
 
