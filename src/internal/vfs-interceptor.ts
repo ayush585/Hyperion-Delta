@@ -39,10 +39,12 @@ type CallbackApiName =
   | "utimes";
 
 type FsApiName = SyncApiName | CallbackApiName;
+type StreamApiName = "createWriteStream";
+type WritableFsApiName = FsApiName | StreamApiName;
 
 type PromiseApiName = CallbackApiName;
 
-type MutableFsModule = Record<FsApiName, (...args: unknown[]) => unknown> & {
+type MutableFsModule = Record<WritableFsApiName, (...args: unknown[]) => unknown> & {
   promises: MutablePromiseFsModule;
 };
 type MutablePromiseFsModule = Record<PromiseApiName, (...args: unknown[]) => unknown>;
@@ -122,6 +124,10 @@ export class VfsInterceptor {
     ]);
     this.patchPromiseModules("chmod", (args) => [{ pathLike: args[0], kind: "metadata" }]);
     this.patchPromiseModules("utimes", (args) => [{ pathLike: args[0], kind: "metadata" }]);
+
+    this.patchStream("createWriteStream", (args) => [
+      { pathLike: args[0], kind: "write", fileTypeHint: "file" },
+    ]);
 
     this.installed = true;
   }
@@ -205,6 +211,21 @@ export class VfsInterceptor {
     target[apiName] = (...args: unknown[]) => {
       this.hooks.beforeMutation(getRecords(args));
       return original.apply(target, args);
+    };
+  }
+
+  private patchStream(
+    apiName: StreamApiName,
+    getRecords: (args: unknown[]) => VfsMutationRecord[],
+  ): void {
+    const original = this.fsModule[apiName];
+    this.restoreOriginals.push(() => {
+      this.fsModule[apiName] = original;
+    });
+
+    this.fsModule[apiName] = (...args: unknown[]) => {
+      this.hooks.beforeMutation(getRecords(args));
+      return original.apply(this.fsModule, args);
     };
   }
 }

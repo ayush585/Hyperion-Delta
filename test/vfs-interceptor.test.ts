@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { once } from "node:events";
 import { afterEach, describe, it } from "node:test";
 
 import { HyperionWorkspace, type Checkpoint, type CheckpointId } from "../src/index.js";
@@ -65,6 +66,14 @@ function captureCallbackError(
       resolvePromise(error);
     });
   });
+}
+
+async function writeStreamAndWait(
+  stream: NodeJS.WritableStream,
+  content: string,
+): Promise<void> {
+  stream.end(content);
+  await once(stream, "finish");
 }
 
 afterEach(async () => {
@@ -605,5 +614,130 @@ describe("VFS interceptor fs/promises APIs", () => {
 
     assert.equal(fs.promises.writeFile, originalFsPromisesWriteFile);
     assert.equal(fsPromises.writeFile, originalNodeFsPromisesWriteFile);
+  });
+});
+
+describe("VFS interceptor write streams", () => {
+  it("auto-registers createWriteStream targets as VFS dirty entries", async () => {
+    const root = createTempWorkspace();
+    const workspace = createWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    const fs = getCommonJsFs();
+    const createdPath = path.join(root, "stream-created.txt");
+
+    workspace.installFsInterceptor();
+    await writeStreamAndWait(fs.createWriteStream(createdPath), "created");
+
+    const dirtyEntry = getWorkspaceCheckpoint(workspace, checkpointId)?.dirty.get("stream-created.txt");
+    assert.equal(dirtyEntry?.capturedBy, "vfs");
+    assert.equal(dirtyEntry?.kind, "created");
+  });
+
+  it("removes files created through createWriteStream during rollback", async () => {
+    const root = createTempWorkspace();
+    const workspace = createWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    const fs = getCommonJsFs();
+    const createdPath = path.join(root, "stream-created.txt");
+
+    workspace.installFsInterceptor();
+    await writeStreamAndWait(fs.createWriteStream(createdPath), "created");
+
+    await workspace.rollback(checkpointId);
+
+    assert.equal(existsSync(createdPath), false);
+  });
+
+  it("backs up modified stream targets before creation so rollback restores original content", async () => {
+    const root = createTempWorkspace();
+    const sourcePath = path.join(root, "source.txt");
+    writeFileSync(sourcePath, "original");
+    const workspace = createWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    const fs = getCommonJsFs();
+
+    workspace.installFsInterceptor();
+    await writeStreamAndWait(fs.createWriteStream(sourcePath), "mutated");
+
+    await workspace.rollback(checkpointId);
+
+    assert.equal(readFileSync(sourcePath, "utf8"), "original");
+  });
+
+  it("backs up append-mode stream targets before append so rollback restores original content", async () => {
+    const root = createTempWorkspace();
+    const sourcePath = path.join(root, "source.txt");
+    writeFileSync(sourcePath, "original");
+    const workspace = createWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    const fs = getCommonJsFs();
+
+    workspace.installFsInterceptor();
+    await writeStreamAndWait(fs.createWriteStream(sourcePath, { flags: "a" }), "\nappended");
+
+    await workspace.rollback(checkpointId);
+
+    assert.equal(readFileSync(sourcePath, "utf8"), "original");
+  });
+
+  it("ignores configured ignored paths and outside-workspace stream targets", async () => {
+    const root = createTempWorkspace();
+    const outsideRoot = mkdtempSync(path.join(tmpdir(), "hyperion-vfs-outside-"));
+    tempRoots.push(outsideRoot);
+    const workspace = createWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    const fs = getCommonJsFs();
+
+    workspace.installFsInterceptor();
+    mkdirSync(path.join(root, "node_modules", "pkg"), { recursive: true });
+    await writeStreamAndWait(
+      fs.createWriteStream(path.join(root, "node_modules", "pkg", "index.js")),
+      "ignored",
+    );
+    await writeStreamAndWait(fs.createWriteStream(path.join(outsideRoot, "outside.txt")), "outside");
+
+    assert.equal(getWorkspaceCheckpoint(workspace, checkpointId)?.dirty.size, 0);
+  });
+
+  it("preserves createWriteStream error emission for missing parent directories", async () => {
+    const root = createTempWorkspace();
+    const workspace = createWorkspace(root);
+    await workspace.snapshot();
+    const fs = getCommonJsFs();
+
+    workspace.installFsInterceptor();
+    const stream = fs.createWriteStream(path.join(root, "missing-parent", "file.txt"));
+    stream.end("content");
+    const [error] = await once(stream, "error");
+
+    assert.equal((error as NodeJS.ErrnoException).code, "ENOENT");
+  });
+
+  it("ignores numeric createWriteStream targets", async () => {
+    const root = createTempWorkspace();
+    const workspace = createWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    const fs = getCommonJsFs();
+    const invalidCreateWriteStream = fs.createWriteStream as unknown as (...args: unknown[]) => unknown;
+
+    workspace.installFsInterceptor();
+
+    assert.throws(() => invalidCreateWriteStream(1), TypeError);
+    assert.equal(getWorkspaceCheckpoint(workspace, checkpointId)?.dirty.size, 0);
+  });
+
+  it("restores original createWriteStream on uninstall", () => {
+    const root = createTempWorkspace();
+    const workspace = createWorkspace(root);
+    const fs = getCommonJsFs();
+    const originalCreateWriteStream = fs.createWriteStream;
+
+    workspace.installFsInterceptor();
+
+    assert.notEqual(fs.createWriteStream, originalCreateWriteStream);
+
+    workspace.uninstallFsInterceptor();
+
+    assert.equal(fs.createWriteStream, originalCreateWriteStream);
   });
 });
