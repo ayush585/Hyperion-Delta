@@ -1,0 +1,27 @@
+name: Release Check
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  release-check:
+    name: Node 20 release check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Verify package
+        run: npm run release:check
