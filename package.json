@@ -13,6 +13,7 @@
   },
   "files": [
     "dist",
+    "assets/hyperion-benchmark-hero.png",
     "README.md",
     "ARCHITECTURE.md"
   ],

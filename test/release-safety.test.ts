@@ -9,7 +9,12 @@ describe("release safety", () => {
   it("keeps the published package file boundary intentional", () => {
     const packageJson = readJson("package.json");
 
-    assert.deepEqual(packageJson.files, ["dist", "README.md", "ARCHITECTURE.md"]);
+    assert.deepEqual(packageJson.files, [
+      "dist",
+      "assets/hyperion-benchmark-hero.png",
+      "README.md",
+      "ARCHITECTURE.md",
+    ]);
     assert.equal(packageJson.dependencies, undefined);
     assert.equal(packageJson.type, "module");
     assert.equal(packageJson.exports["."].import, "./dist/index.js");

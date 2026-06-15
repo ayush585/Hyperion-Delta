@@ -1,8 +1,40 @@
 # Hyperion Delta-Bench
 
-Hyperion Delta-Bench is a zero-dependency TypeScript timing harness for local agent state rollback. It compares the legacy agent behavior of resetting an entire Git workspace with optimized rollback strategies that only touch files the agent actually changed.
+Hyperion Delta-Bench proves a simple systems result for local AI agents: rollback should scale with the files the agent changed, not with the size of the whole repository.
 
-The benchmark synthesizes a 50,000-file TypeScript workspace nested 10 directories deep, then measures 50 rollback cycles with `process.hrtime.bigint()`.
+In the final audit run, Git reset took `3,478.407 ms` per rollback. Hyperion's targeted manifest restore took `0.971 ms`. The tmpfs dirty-set path took `0.063 ms`, a `54,851.92x` speedup over Git.
+
+![Hyperion Delta-Bench benchmark dashboard](./assets/hyperion-benchmark-hero.png)
+
+## Benchmark Result
+
+The benchmark synthesizes a 50,000-file TypeScript workspace nested 10 directories deep, then measures rollback cycles with `process.hrtime.bigint()`.
+
+| Runner | Total I/O Block Time | Average Rollback Latency | Samples | Speedup vs Git | Reduction vs Git |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Legacy Runner (`git reset --hard` + `git clean -fd`) | `34,784.070 ms` | `3,478.407 ms` | 10 | `1.00x` | `0.00%` |
+| Targeted Reversion (manifest file restore) | `9.715 ms` | `0.971 ms` | 10 | `3,580.50x` | `99.97%` |
+| Targeted Reversion (`rsync` file-list/link-dest) | `504.942 ms` | `50.494 ms` | 10 | `68.89x` | `98.55%` |
+| Targeted Reversion (tmpfs dirty-set restore, WSL2) | `0.634 ms` | `0.063 ms` | 10 | `54,851.92x` | `100.00%` |
+
+Raw evidence:
+
+- [`benchmark-final-run.log`](./benchmark-final-run.log)
+- [`benchmark-final-table.png`](./benchmark-final-table.png)
+- [`benchmark-final-full.png`](./benchmark-final-full.png)
+
+## Why This Matters For Agents
+
+Local coding agents do not just edit once. They mutate files, run tests, fail, backtrack, and try another branch. If every failed attempt pays a multi-second Git reset or full-tree clone/delete penalty, search quality gets capped by filesystem latency instead of model reasoning.
+
+Hyperion's result is not "copy-on-write always wins." The first full-tree CoW clone/delete design was slower than Git because it still churned through tens of thousands of directory entries and inodes. The winning strategy is targeted state reversion:
+
+- Git reset scales with repository-wide filesystem inspection.
+- Full tree clone/delete scales with repository-wide metadata churn.
+- Hyperion manifest rollback scales with the dirty set.
+- tmpfs dirty-set rollback shows the upper bound when rollback metadata and content stay in RAM.
+
+For Prettiflow-style local MCTS or repair loops, that means an agent can test far more branches without leaving the developer's workspace dirty.
 
 ## SDK Quickstart
 
@@ -62,7 +94,7 @@ For a focused install smoke after an existing build:
 npm run package:smoke
 ```
 
-The published package is intentionally limited to `dist`, `README.md`, `ARCHITECTURE.md`, and required npm metadata. Benchmark commands are repository-checkout utilities and are not part of the SDK runtime surface.
+The published package is intentionally limited to `dist`, the README/architecture docs, the benchmark hero image used by the README, and required npm metadata. Benchmark commands are repository-checkout utilities and are not part of the SDK runtime surface.
 
 ## Troubleshooting
 
@@ -137,3 +169,17 @@ The target outcome is not "copy-on-write always wins." The meaningful result is:
 - Full tree clone/delete scales with repository-wide metadata churn.
 - Targeted rollback scales with the number of files the agent actually changed.
 - tmpfs dirty-set rollback shows the best-case latency when the rollback cache avoids disk hardware entirely.
+
+## Benchmark Ideas To Run Next
+
+The current final run is intentionally narrow: a 50,000-file fixture, one simulated agent edit cycle, and 10 measured rollback samples. The next useful benchmark work is to map the performance envelope:
+
+- Dirty-set size sweep: 1, 10, 100, and 1,000 changed files.
+- Repository size sweep: 10k, 50k, 100k, and 250k files.
+- Platform matrix: WSL2, native Linux, macOS APFS, and Windows NTFS.
+- Tooling matrix: `tsc`, formatters, generated snapshots, package-manager outputs, `esbuild`, `oxc`, and SWC.
+- Strategy matrix: Git reset, manifest restore, POSIX link storage, and tmpfs dirty-set storage.
+- Cache matrix: cold-cache and warm-cache runs.
+- Agent-search stress test: concurrent checkpoints and MCTS-style branch rollback.
+
+Those runs should keep the same rule as this benchmark: measure rollback latency with `process.hrtime.bigint()`, print the work root, report skipped platform-specific strategies explicitly, and never hide metadata-heavy failures. The full-tree clone/delete miss is part of the engineering evidence.
