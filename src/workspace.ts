@@ -16,6 +16,7 @@ import { LifecycleCleanupRegistry } from "./internal/lifecycle.js";
 import { isPathInsideRoot, normalizeWorkspacePath } from "./internal/path.js";
 import { ReconciliationEngine } from "./internal/reconciliation-engine.js";
 import { RollbackEngine } from "./internal/rollback-engine.js";
+import { HyperionSessionManager } from "./internal/session-gc.js";
 import {
   ensureSessionRoot,
   probeSessionDeviceInfo,
@@ -50,6 +51,7 @@ export class HyperionWorkspace {
   private readonly checkpointStore: CheckpointStore;
   private readonly checkpointStorage = new Map<CheckpointId, StorageStrategy>();
   private readonly storageSessionId = randomUUID();
+  private readonly sessionManager: HyperionSessionManager;
   private readonly rollbackEngine = new RollbackEngine();
   private readonly reconciliationEngine = new ReconciliationEngine();
   private readonly vfsInterceptor: VfsInterceptor;
@@ -64,6 +66,12 @@ export class HyperionWorkspace {
     this.root = config.workspaceRoot;
     this.config = config;
     this.ignoreMatcher = createIgnoreMatcher(config.ignoredPatterns);
+    this.sessionManager = new HyperionSessionManager({
+      workspaceRoot: this.root,
+      sessionId: this.storageSessionId,
+      shouldSkipWorkspacePath: (relativePath) => this.ignoreMatcher.matches(relativePath),
+    });
+    this.sessionManager.initialize();
     this.environmentProfile = discoverEnvironmentProfile({
       workspaceRoot: config.workspaceRoot,
       sessionRoot: config.sessionRoot,
@@ -421,6 +429,12 @@ export class HyperionWorkspace {
       } finally {
         this.checkpointStorage.delete(checkpointId);
       }
+    }
+
+    try {
+      this.sessionManager.cleanupCurrentSession();
+    } catch {
+      // Current-session cleanup is best-effort.
     }
   }
 }

@@ -1,5 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import assert from "node:assert/strict";
@@ -171,6 +179,14 @@ function getWorkspaceCheckpointStorage(
       checkpointStorage: Map<CheckpointId, StorageStrategy>;
     }
   ).checkpointStorage.get(checkpointId);
+}
+
+function getWorkspaceSessionDirectory(workspace: HyperionWorkspace): string {
+  return (
+    workspace as unknown as {
+      sessionManager: { sessionDir: string };
+    }
+  ).sessionManager.sessionDir;
 }
 
 function forceWorkspaceEnvironmentProfile(
@@ -386,12 +402,13 @@ describe("HyperionWorkspace", () => {
     assert.equal(matcher.matches("src/index.ts"), false);
   });
 
-  it("does not create the session root during construction", () => {
+  it("does not create the checkpoint session root during construction", () => {
     const root = createTempWorkspace();
     const workspace = new HyperionWorkspace(root);
 
     assert.equal(workspace.config.sessionRoot, join(resolve(root), ".hyperion", "checkpoints"));
-    assert.equal(existsSync(join(root, ".hyperion")), false);
+    assert.equal(existsSync(workspace.config.sessionRoot), false);
+    assert.equal(existsSync(getWorkspaceSessionDirectory(workspace)), true);
   });
 
   it("creates the session root lazily when requested internally", () => {
@@ -856,6 +873,24 @@ describe("HyperionWorkspace", () => {
     }
   });
 
+  it("creates a current session directory with a lockfile during construction", () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const sessionDir = getWorkspaceSessionDirectory(workspace);
+    const sessionNames = readdirSync(join(root, ".hyperion")).filter((entry) =>
+      entry.startsWith("session-"),
+    );
+    const lockfile = JSON.parse(readFileSync(join(sessionDir, "lock.json"), "utf8")) as {
+      sessionId: string;
+      pid: number;
+    };
+
+    assert.equal(existsSync(sessionDir), true);
+    assert.equal(sessionNames.length, 1);
+    assert.equal(typeof lockfile.sessionId, "string");
+    assert.equal(typeof lockfile.pid, "number");
+  });
+
   it("unregisters lifecycle hooks during idempotent dispose", async () => {
     const root = createTempWorkspace();
     const workspace = new HyperionWorkspace(root);
@@ -868,6 +903,17 @@ describe("HyperionWorkspace", () => {
     }
   });
 
+  it("removes the current session directory during dispose", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const sessionDir = getWorkspaceSessionDirectory(workspace);
+
+    await workspace.dispose();
+    await workspace.dispose();
+
+    assert.equal(existsSync(sessionDir), false);
+  });
+
   it("emergency cleanup uninstalls the fs interceptor", () => {
     const root = createTempWorkspace();
     const workspace = new HyperionWorkspace(root);
@@ -876,6 +922,16 @@ describe("HyperionWorkspace", () => {
     lifecycleAdapter.emit("exit", 0);
 
     assert.equal(workspace.isFsInterceptorInstalled, false);
+  });
+
+  it("emergency cleanup removes the current session directory", () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const sessionDir = getWorkspaceSessionDirectory(workspace);
+
+    lifecycleAdapter.emit("exit", 0);
+
+    assert.equal(existsSync(sessionDir), false);
   });
 
   it("emergency cleanup invokes every active checkpoint storage cleanup", async () => {
