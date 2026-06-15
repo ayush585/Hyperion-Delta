@@ -30,8 +30,6 @@ export class CheckpointStore {
   public constructor(private readonly config: ResolvedHyperionConfig) {}
 
   public createCheckpoint(input: CreateCheckpointInput): StoredCheckpoint {
-    this.ensureCapacityAvailable();
-
     const id = randomUUID();
     const storageNamespace = path.join(this.config.sessionRoot, id);
     const checkpoint: StoredCheckpoint = {
@@ -57,12 +55,6 @@ export class CheckpointStore {
   }
 
   public ensureCapacityAvailable(): void {
-    this.collectDisposed();
-
-    if (this.activeCount >= this.config.maxConcurrentCheckpoints) {
-      this.collectDisposed();
-    }
-
     if (this.activeCount >= this.config.maxConcurrentCheckpoints) {
       throw new HyperionCapacityError(
         `Maximum active checkpoints reached: ${this.config.maxConcurrentCheckpoints}`,
@@ -94,6 +86,18 @@ export class CheckpointStore {
     }
 
     checkpoint.status = "disposed";
+  }
+
+  public getDisposedCheckpoints(): StoredCheckpoint[] {
+    const disposedCheckpoints: StoredCheckpoint[] = [];
+
+    for (const checkpoint of this.checkpoints.values()) {
+      if (checkpoint.status === "disposed") {
+        disposedCheckpoints.push(checkpoint);
+      }
+    }
+
+    return disposedCheckpoints;
   }
 
   public collectDisposed(): number {

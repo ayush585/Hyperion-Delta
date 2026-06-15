@@ -113,7 +113,7 @@ export class HyperionWorkspace {
 
   public async snapshot(): Promise<CheckpointId> {
     this.assertNotDisposed("snapshot()");
-    this.checkpointStore.collectDisposed();
+    this.runCapacityGarbageCollection();
     this.checkpointStore.ensureCapacityAvailable();
     this.ensureSessionRoot();
     const deviceInfo = this.probeSessionDeviceInfo();
@@ -404,6 +404,36 @@ export class HyperionWorkspace {
 
     storage.cleanup?.();
     this.checkpointStorage.delete(checkpointId);
+  }
+
+  private cleanupCheckpointStorageBestEffort(checkpointId: CheckpointId): void {
+    const storage = this.checkpointStorage.get(checkpointId);
+
+    if (!storage) {
+      return;
+    }
+
+    try {
+      storage.cleanup?.();
+    } catch {
+      // Capacity GC must continue freeing other disposed checkpoint namespaces.
+    } finally {
+      this.checkpointStorage.delete(checkpointId);
+    }
+  }
+
+  private runCapacityGarbageCollection(): void {
+    try {
+      this.sessionManager.runStartupGarbageCollection();
+    } catch {
+      // Capacity GC is best-effort and must not mask capacity decisions.
+    }
+
+    for (const checkpoint of this.checkpointStore.getDisposedCheckpoints()) {
+      this.cleanupCheckpointStorageBestEffort(checkpoint.id);
+    }
+
+    this.checkpointStore.collectDisposed();
   }
 
   private emergencyCleanupSync(): void {

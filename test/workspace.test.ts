@@ -189,6 +189,17 @@ function getWorkspaceSessionDirectory(workspace: HyperionWorkspace): string {
   ).sessionManager.sessionDir;
 }
 
+function replaceWorkspaceSessionGarbageCollection(
+  workspace: HyperionWorkspace,
+  runStartupGarbageCollection: () => void,
+): void {
+  (
+    workspace as unknown as {
+      sessionManager: { runStartupGarbageCollection: () => void };
+    }
+  ).sessionManager.runStartupGarbageCollection = runStartupGarbageCollection;
+}
+
 function forceWorkspaceEnvironmentProfile(
   workspace: HyperionWorkspace,
   overrides: Partial<EnvironmentProfile>,
@@ -531,6 +542,117 @@ describe("HyperionWorkspace", () => {
     assert.equal(getWorkspaceCheckpoint(workspace, firstId), undefined);
     assert.ok(getWorkspaceCheckpoint(workspace, secondId));
     assert.equal(getActiveCheckpointCount(workspace), 1);
+  });
+
+  it("cleans disposed checkpoint storage before creating a new snapshot", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace({
+      workspaceRoot: root,
+      maxConcurrentCheckpoints: 1,
+    });
+    const firstId = await workspace.snapshot();
+    let cleanupCount = 0;
+    replaceWorkspaceCheckpointStorage(
+      workspace,
+      firstId,
+      createCleanupTrackingStorage(() => {
+        cleanupCount += 1;
+      }),
+    );
+
+    markWorkspaceCheckpointDisposed(workspace, firstId);
+    const secondId = await workspace.snapshot();
+
+    assert.notEqual(secondId, firstId);
+    assert.equal(cleanupCount, 1);
+    assert.equal(getWorkspaceCheckpoint(workspace, firstId), undefined);
+    assert.equal(getWorkspaceCheckpointStorage(workspace, firstId), undefined);
+    assert.ok(getWorkspaceCheckpoint(workspace, secondId));
+  });
+
+  it("capacity GC attempts every disposed checkpoint storage namespace", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace({
+      workspaceRoot: root,
+      maxConcurrentCheckpoints: 2,
+    });
+    const firstId = await workspace.snapshot();
+    const secondId = await workspace.snapshot();
+    const cleanedIds: CheckpointId[] = [];
+    replaceWorkspaceCheckpointStorage(
+      workspace,
+      firstId,
+      createCleanupTrackingStorage(() => {
+        cleanedIds.push(firstId);
+      }),
+    );
+    replaceWorkspaceCheckpointStorage(
+      workspace,
+      secondId,
+      createCleanupTrackingStorage(() => {
+        cleanedIds.push(secondId);
+      }),
+    );
+
+    markWorkspaceCheckpointDisposed(workspace, firstId);
+    markWorkspaceCheckpointDisposed(workspace, secondId);
+    const thirdId = await workspace.snapshot();
+
+    assert.deepEqual(cleanedIds.sort(), [firstId, secondId].sort());
+    assert.equal(getWorkspaceCheckpoint(workspace, firstId), undefined);
+    assert.equal(getWorkspaceCheckpoint(workspace, secondId), undefined);
+    assert.ok(getWorkspaceCheckpoint(workspace, thirdId));
+  });
+
+  it("swallows disposed checkpoint storage cleanup errors while freeing capacity", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace({
+      workspaceRoot: root,
+      maxConcurrentCheckpoints: 1,
+    });
+    const firstId = await workspace.snapshot();
+    replaceWorkspaceCheckpointStorage(
+      workspace,
+      firstId,
+      createCleanupTrackingStorage(() => {
+        throw new Error("cleanup failed");
+      }),
+    );
+
+    markWorkspaceCheckpointDisposed(workspace, firstId);
+    const secondId = await workspace.snapshot();
+
+    assert.equal(getWorkspaceCheckpoint(workspace, firstId), undefined);
+    assert.equal(getWorkspaceCheckpointStorage(workspace, firstId), undefined);
+    assert.ok(getWorkspaceCheckpoint(workspace, secondId));
+  });
+
+  it("keeps active checkpoints protected when capacity GC cannot free space", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace({
+      workspaceRoot: root,
+      maxConcurrentCheckpoints: 1,
+    });
+    const firstId = await workspace.snapshot();
+    let cleanupCount = 0;
+    let sessionGcCount = 0;
+    replaceWorkspaceCheckpointStorage(
+      workspace,
+      firstId,
+      createCleanupTrackingStorage(() => {
+        cleanupCount += 1;
+      }),
+    );
+    replaceWorkspaceSessionGarbageCollection(workspace, () => {
+      sessionGcCount += 1;
+    });
+
+    await assert.rejects(() => workspace.snapshot(), HyperionCapacityError);
+
+    assert.equal(cleanupCount, 0);
+    assert.equal(sessionGcCount, 1);
+    assert.ok(getWorkspaceCheckpoint(workspace, firstId));
+    assert.ok(getWorkspaceCheckpointStorage(workspace, firstId));
   });
 
   it("clears checkpoints during dispose and rejects snapshots after disposal", async () => {
