@@ -54,22 +54,32 @@ That failure is useful. Reflinks avoid copying file blocks, but they do not elim
 
 Hyperion's practical optimization is therefore targeted state reversion: track the agent's dirty set and revert only those paths. The tmpfs mode demonstrates the upper bound for Prettiflow-style local search when dirty-set content and metadata operations live in RAM.
 
-## Running
+## Running The Benchmark
 
-On Linux or WSL2:
+For a fast local regression check:
 
-```bash
-npx --yes tsx benchmark.ts
+```sh
+npm run benchmark:smoke
 ```
 
-For the cleanest filesystem signal, run inside a native Linux filesystem or the XFS loopback mount used during audit testing. The tmpfs row appears automatically when `/dev/shm` is available.
+Smoke mode uses a small fixture and temporary work root. It validates the benchmark shape and strategy routing, not final performance evidence.
+
+For the full benchmark defaults:
+
+```sh
+npm run benchmark
+```
+
+The full run preserves the audit-scale defaults in `benchmark.ts`. For the cleanest filesystem signal, run inside a native Linux filesystem or the XFS loopback mount used during audit testing. The tmpfs row appears automatically when `/dev/shm` is available.
 
 When launched from WSL under `/mnt/c`, the script automatically stages generated benchmark workspaces in native Linux `/tmp` and prints the selected work root. This keeps the requested Windows project path usable while avoiding DrvFS metadata emulation from dominating the benchmark.
 
-For quick smoke checks, the script also accepts environment overrides while preserving the audit defaults:
+The benchmark prints the selected work root, fixture size, iteration count, and runner strategy rows. If optional capabilities are unavailable, such as `rsync` or Linux `/dev/shm`, those rows are reported as skipped instead of failing the run.
 
-```bash
-HYPERION_FILE_COUNT=1000 HYPERION_ITERATIONS=3 npx --yes tsx benchmark.ts
+The script also accepts environment overrides while preserving the audit defaults:
+
+```sh
+HYPERION_FILE_COUNT=1000 HYPERION_ITERATIONS=3 npm run benchmark
 ```
 
 ## Interpreting Results

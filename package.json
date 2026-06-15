@@ -17,6 +17,8 @@
     "ARCHITECTURE.md"
   ],
   "scripts": {
+    "benchmark": "node scripts/run-benchmark.mjs full",
+    "benchmark:smoke": "node scripts/run-benchmark.mjs smoke",
     "build": "tsc -p tsconfig.json",
     "build:test": "tsc -p tsconfig.test.json",
     "typecheck": "tsc -p tsconfig.test.json --noEmit",
