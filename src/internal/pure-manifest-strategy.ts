@@ -14,24 +14,13 @@ import { randomUUID } from "node:crypto";
 
 import { HyperionIntegrityError } from "../errors.js";
 import { normalizeWorkspacePath } from "./path.js";
+import type {
+  StorageBackupRecord,
+  StorageRestoreResult,
+  StorageStrategy,
+} from "./storage-strategy.js";
 
-export type StorageBackupKind = "file" | "directory" | "symlink" | "missing";
-
-export interface StorageBackupRecord {
-  relativePath: string;
-  kind: StorageBackupKind;
-  backupPath?: string;
-  mode?: number;
-  linkTarget?: string;
-}
-
-export interface StorageRestoreResult {
-  relativePath: string;
-  restored: boolean;
-  deleted: boolean;
-}
-
-export class PureManifestStrategy {
+export class PureManifestStrategy implements StorageStrategy {
   private readonly backupRecords = new Map<string, StorageBackupRecord>();
 
   public constructor(

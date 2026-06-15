@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,7 +13,6 @@ import {
 import { GhostDirectoryCleaner } from "./internal/ghost-directory-cleaner.js";
 import { createIgnoreMatcher, type IgnoreMatcher } from "./internal/ignore.js";
 import { isPathInsideRoot, normalizeWorkspacePath } from "./internal/path.js";
-import { PureManifestStrategy } from "./internal/pure-manifest-strategy.js";
 import { ReconciliationEngine } from "./internal/reconciliation-engine.js";
 import { RollbackEngine } from "./internal/rollback-engine.js";
 import {
@@ -25,6 +25,8 @@ import {
   selectStorageStrategy,
   type StrategySelection,
 } from "./internal/strategy.js";
+import { createCheckpointStorage } from "./internal/storage-factory.js";
+import type { StorageStrategy } from "./internal/storage-strategy.js";
 import { VfsInterceptor, type VfsMutationRecord } from "./internal/vfs-interceptor.js";
 import type {
   CheckpointId,
@@ -46,7 +48,8 @@ export class HyperionWorkspace {
   private readonly strategySelection: StrategySelection;
   private readonly stateEngine: HybridStateEngine;
   private readonly checkpointStore: CheckpointStore;
-  private readonly checkpointStorage = new Map<CheckpointId, PureManifestStrategy>();
+  private readonly checkpointStorage = new Map<CheckpointId, StorageStrategy>();
+  private readonly storageSessionId = randomUUID();
   private readonly rollbackEngine = new RollbackEngine();
   private readonly reconciliationEngine = new ReconciliationEngine();
   private readonly vfsInterceptor: VfsInterceptor;
@@ -109,7 +112,13 @@ export class HyperionWorkspace {
     });
     this.checkpointStorage.set(
       checkpoint.id,
-      new PureManifestStrategy(this.root, checkpoint.storageNamespace),
+      createCheckpointStorage({
+        workspaceRoot: this.root,
+        selectedKind: this.strategySelection.kind,
+        checkpointNamespace: checkpoint.storageNamespace,
+        checkpointId: checkpoint.id,
+        sessionId: this.storageSessionId,
+      }),
     );
 
     return checkpoint.id;
@@ -349,7 +358,7 @@ export class HyperionWorkspace {
     return checkpoint;
   }
 
-  private requireCheckpointStorage(checkpointId: CheckpointId): PureManifestStrategy {
+  private requireCheckpointStorage(checkpointId: CheckpointId): StorageStrategy {
     const storage = this.checkpointStorage.get(checkpointId);
 
     if (!storage) {

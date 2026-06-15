@@ -2,11 +2,11 @@ import { HyperionIntegrityError, HyperionRollbackError } from "../errors.js";
 import type { DirtyEntry } from "../types.js";
 import type { StoredCheckpoint } from "./checkpoint-store.js";
 import { GhostDirectoryCleaner } from "./ghost-directory-cleaner.js";
-import type { PureManifestStrategy } from "./pure-manifest-strategy.js";
+import type { StorageStrategy } from "./storage-strategy.js";
 
 export interface RollbackEngineOptions {
   checkpoint: StoredCheckpoint;
-  storage: PureManifestStrategy;
+  storage: StorageStrategy;
   ghostDirectoryCleaner: GhostDirectoryCleaner;
   reconcile: () => Promise<void>;
 }
@@ -40,7 +40,7 @@ export class RollbackEngine {
 
   private restoreDirtyEntries(
     checkpoint: StoredCheckpoint,
-    storage: PureManifestStrategy,
+    storage: StorageStrategy,
     ghostDirectoryCleaner: GhostDirectoryCleaner,
   ): void {
     const createdEntries = this.dirtyEntriesByKind(checkpoint, "created");
