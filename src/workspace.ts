@@ -142,6 +142,7 @@ export class HyperionWorkspace {
         await this.reconcile(checkpointId);
       },
     });
+    this.cleanupCheckpointStorage(checkpointId);
   }
 
   public async reconcile(checkpointId?: CheckpointId): Promise<ReconcileResult> {
@@ -164,8 +165,10 @@ export class HyperionWorkspace {
 
   public async dispose(): Promise<void> {
     this.uninstallFsInterceptor();
+    for (const checkpointId of [...this.checkpointStorage.keys()]) {
+      this.cleanupCheckpointStorage(checkpointId);
+    }
     this.checkpointStore.clear();
-    this.checkpointStorage.clear();
     this.disposed = true;
   }
 
@@ -366,6 +369,17 @@ export class HyperionWorkspace {
     }
 
     return storage;
+  }
+
+  private cleanupCheckpointStorage(checkpointId: CheckpointId): void {
+    const storage = this.checkpointStorage.get(checkpointId);
+
+    if (!storage) {
+      return;
+    }
+
+    storage.cleanup?.();
+    this.checkpointStorage.delete(checkpointId);
   }
 }
 

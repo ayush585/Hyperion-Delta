@@ -135,4 +135,21 @@ describe("TmpfsDirtySetStrategy", () => {
     assert.equal(record.kind, "symlink");
     assert.equal(readlinkSync(path.join(workspaceRoot, "target-link.txt")), "target.txt");
   });
+
+  it("cleans up only its owned checkpoint namespace", () => {
+    const workspaceRoot = createTempRoot("hyperion-tmpfs-workspace-");
+    const tmpfsRoot = createTempRoot("hyperion-tmpfs-root-");
+    const strategy = createStrategy(workspaceRoot, tmpfsRoot);
+    const siblingNamespace = path.join(tmpfsRoot, "session-1", "sibling-checkpoint");
+    mkdirSync(siblingNamespace, { recursive: true });
+    writeFileSync(path.join(siblingNamespace, "safe.txt"), "safe");
+    writeFileSync(path.join(workspaceRoot, "source.txt"), "original");
+    strategy.backupFile("source.txt");
+
+    strategy.cleanup();
+
+    assert.equal(existsSync(strategy.backupNamespace), false);
+    assert.equal(readFileSync(path.join(siblingNamespace, "safe.txt"), "utf8"), "safe");
+    assert.equal(existsSync(tmpfsRoot), true);
+  });
 });

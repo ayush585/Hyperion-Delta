@@ -19,6 +19,8 @@ import {
 import { createIgnoreMatcher } from "../src/internal/ignore.js";
 import { normalizeWorkspacePath } from "../src/internal/path.js";
 import { probeSessionDeviceInfo, type SessionFsAdapter } from "../src/internal/session.js";
+import type { StorageStrategy } from "../src/internal/storage-strategy.js";
+import { TmpfsDirtySetStrategy } from "../src/internal/tmpfs-dirty-set-strategy.js";
 
 const tempRoots: string[] = [];
 
@@ -102,6 +104,31 @@ function backupWorkspaceCheckpointPath(
       backupCheckpointPath(checkpointId: CheckpointId, pathOrPathLike: string): void;
     }
   ).backupCheckpointPath(checkpointId, pathOrPathLike);
+}
+
+function replaceWorkspaceCheckpointStorage(
+  workspace: HyperionWorkspace,
+  checkpointId: CheckpointId,
+  storage: StorageStrategy,
+): void {
+  (
+    workspace as unknown as {
+      checkpointStorage: Map<CheckpointId, StorageStrategy>;
+    }
+  ).checkpointStorage.set(checkpointId, storage);
+}
+
+function createTmpfsCheckpointStorage(
+  workspaceRoot: string,
+  tmpfsRoot: string,
+  checkpointId: CheckpointId,
+): TmpfsDirtySetStrategy {
+  return new TmpfsDirtySetStrategy({
+    workspaceRoot,
+    tmpfsRoot,
+    sessionId: "workspace-test-session",
+    checkpointId,
+  });
 }
 
 function runChildProcessScript(root: string, script: string): void {
@@ -539,6 +566,58 @@ describe("HyperionWorkspace", () => {
     await workspace.rollback(checkpointId);
 
     assert.equal(readFileSync(sourcePath, "utf8"), "original");
+  });
+
+  it("cleans checkpoint storage after successful rollback", async () => {
+    const root = createTempWorkspace();
+    const tmpfsRoot = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const sourcePath = join(root, "source.txt");
+    writeFileSync(sourcePath, "original");
+    const checkpointId = await workspace.snapshot();
+    const storage = createTmpfsCheckpointStorage(root, tmpfsRoot, checkpointId);
+    replaceWorkspaceCheckpointStorage(workspace, checkpointId, storage);
+    backupWorkspaceCheckpointPath(workspace, checkpointId, "source.txt");
+    writeFileSync(sourcePath, "mutated");
+
+    await workspace.rollback(checkpointId);
+
+    assert.equal(readFileSync(sourcePath, "utf8"), "original");
+    assert.equal(existsSync(storage.backupNamespace), false);
+  });
+
+  it("leaves checkpoint storage intact after failed rollback", async () => {
+    const root = createTempWorkspace();
+    const tmpfsRoot = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const sourcePath = join(root, "source.txt");
+    writeFileSync(sourcePath, "original");
+    const checkpointId = await workspace.snapshot();
+    const storage = createTmpfsCheckpointStorage(root, tmpfsRoot, checkpointId);
+    replaceWorkspaceCheckpointStorage(workspace, checkpointId, storage);
+    writeFileSync(sourcePath, "mutated");
+
+    await assert.rejects(() => workspace.rollback(checkpointId), HyperionIntegrityError);
+
+    assert.equal(existsSync(storage.backupNamespace), true);
+    assert.equal(getWorkspaceCheckpoint(workspace, checkpointId)?.status, "active");
+  });
+
+  it("cleans active checkpoint storage namespaces during dispose", async () => {
+    const root = createTempWorkspace();
+    const tmpfsRoot = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const firstId = await workspace.snapshot();
+    const secondId = await workspace.snapshot();
+    const firstStorage = createTmpfsCheckpointStorage(root, tmpfsRoot, firstId);
+    const secondStorage = createTmpfsCheckpointStorage(root, tmpfsRoot, secondId);
+    replaceWorkspaceCheckpointStorage(workspace, firstId, firstStorage);
+    replaceWorkspaceCheckpointStorage(workspace, secondId, secondStorage);
+
+    await workspace.dispose();
+
+    assert.equal(existsSync(firstStorage.backupNamespace), false);
+    assert.equal(existsSync(secondStorage.backupNamespace), false);
   });
 
   it("throws integrity errors for modified files without backup records", async () => {

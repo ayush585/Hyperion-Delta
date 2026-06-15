@@ -111,6 +111,10 @@ export class PureManifestStrategy implements StorageStrategy {
     return this.backupRecords.get(relativePath);
   }
 
+  public cleanup(): void {
+    // Pure Manifest storage is project-local for now; lifecycle GC owns persistent cleanup.
+  }
+
   private restoreRegularFile(record: StorageBackupRecord): StorageRestoreResult {
     if (!record.backupPath || !existsSync(record.backupPath)) {
       throw new HyperionIntegrityError(`Missing backup for ${record.relativePath}`);
