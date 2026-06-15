@@ -6,7 +6,8 @@ Hyperion Delta is currently a local Node.js/TypeScript SDK with zero runtime dep
 
 Security-relevant constraints:
 
-- Public APIs do not accept or execute arbitrary shell commands.
+- Public APIs do not accept or execute arbitrary shell command strings.
+- `HyperionAgentSession.exec()` is a convenience wrapper around an explicit executable plus argument array. It uses `shell: false` by default and exists to guarantee reconciliation around external tools; it is not a security sandbox.
 - Runtime command probes are fixed internal checks only, currently `git --version`, `rsync --version`, and fixed Git metadata reads.
 - User-controlled paths are normalized to workspace-relative form before filesystem operations.
 - Default ignores exclude dependency and internal state folders such as `node_modules/**`, `.git/**`, and `.hyperion/**`.

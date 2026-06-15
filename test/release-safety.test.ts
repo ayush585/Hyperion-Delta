@@ -48,7 +48,7 @@ describe("release safety", () => {
     assert.doesNotMatch(workflow, /--provenance/);
   });
 
-  it("limits runtime child-process usage to fixed internal probes", () => {
+  it("keeps runtime child-process usage fixed or explicit-args only", () => {
     const runtimeFiles = listFiles(path.join(repoRoot, "src"), ".ts");
     const childProcessFiles = runtimeFiles.filter((file) => {
       const source = readFileSync(file, "utf8");
@@ -57,15 +57,19 @@ describe("release safety", () => {
 
     assert.deepEqual(
       childProcessFiles.map((file) => path.relative(repoRoot, file).replaceAll(path.sep, "/")).sort(),
-      ["src/internal/environment.ts", "src/internal/state.ts"],
+      ["src/agent-session.ts", "src/internal/environment.ts", "src/internal/state.ts"],
     );
 
     for (const file of childProcessFiles) {
       const source = readFileSync(file, "utf8");
       assert.doesNotMatch(source, /\bexecSync\b/);
-      assert.doesNotMatch(source, /\bspawn(?:Sync)?\b/);
-      assert.match(source, /\bexecFileSync\b/);
+      assert.doesNotMatch(source, /\bshell:\s*true\b/);
     }
+
+    const agentSessionSource = readFileSync(path.join(repoRoot, "src/agent-session.ts"), "utf8");
+    assert.match(agentSessionSource, /\bspawn\b/);
+    assert.match(agentSessionSource, /shell:\s*false/);
+    assert.doesNotMatch(agentSessionSource, /\bspawnSync\b/);
 
     const stateSource = readFileSync(path.join(repoRoot, "src/internal/state.ts"), "utf8");
     assert.match(stateSource, /execFileSync\("git"/);

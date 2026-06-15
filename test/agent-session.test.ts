@@ -14,8 +14,14 @@ import { afterEach, describe, it } from "node:test";
 
 import {
   HyperionAgentSession,
+  HyperionExecError,
   type HyperionAgentSessionDiagnostics,
+  type HyperionAttemptContext,
+  type HyperionAttemptOptions,
+  type HyperionAttemptResult,
   type CheckpointId,
+  type HyperionExecOptions,
+  type HyperionExecResult,
   type ReconcileResult,
 } from "../src/index.js";
 
@@ -130,6 +136,164 @@ describe("HyperionAgentSession", () => {
     assert.equal(diagnostics.isDisposed, false);
   });
 
+  it("runs a successful attempt with automatic snapshot and reconciliation", async () => {
+    const root = createTempWorkspace();
+    const fs = getCommonJsFs();
+    const session = createSession(root);
+
+    const attemptResult = await session.runAttempt(async ({ checkpointId }) => {
+      assert.equal(typeof checkpointId, "string");
+      fs.writeFileSync(path.join(root, "created.txt"), "created");
+      return "passed";
+    });
+
+    assert.equal(attemptResult.result, "passed");
+    assert.equal(attemptResult.rolledBack, false);
+    assert.equal(attemptResult.reconcileResult?.created.includes("created.txt"), true);
+    assert.equal(session.lastReconcileResult, attemptResult.reconcileResult);
+    assert.equal(readFileSync(path.join(root, "created.txt"), "utf8"), "created");
+  });
+
+  it("rolls back VFS and child-process writes when an attempt throws", async () => {
+    const root = createTempWorkspace();
+    const fs = getCommonJsFs();
+    const sourcePath = path.join(root, "source.txt");
+    writeFileSync(sourcePath, "original");
+    const session = createSession(root);
+    const attemptError = new Error("attempt failed");
+
+    await assert.rejects(
+      () =>
+        session.runAttempt(async ({ exec }) => {
+          fs.writeFileSync(sourcePath, "mutated");
+          fs.writeFileSync(path.join(root, "created.txt"), "created");
+          await exec(process.execPath, [
+            "-e",
+            "require('node:fs').writeFileSync('child-created.txt', 'child')",
+          ], { captureOutput: true });
+          throw attemptError;
+        }),
+      (error) => {
+        assert.equal(error, attemptError);
+        assert.equal((error as { rolledBack?: boolean }).rolledBack, true);
+        assert.equal(typeof (error as { checkpointId?: string }).checkpointId, "string");
+        assert.equal(typeof (error as { rollbackMs?: number }).rollbackMs, "number");
+        return true;
+      },
+    );
+
+    assert.equal(readFileSync(sourcePath, "utf8"), "original");
+    assert.equal(existsSync(path.join(root, "created.txt")), false);
+    assert.equal(existsSync(path.join(root, "child-created.txt")), false);
+  });
+
+  it("can leave failed attempt files in place when rollbackOnThrow is false", async () => {
+    const root = createTempWorkspace();
+    const fs = getCommonJsFs();
+    const session = createSession(root);
+    const attemptError = new Error("inspect failure");
+
+    await assert.rejects(
+      () =>
+        session.runAttempt(
+          () => {
+            fs.writeFileSync(path.join(root, "created.txt"), "created");
+            throw attemptError;
+          },
+          { rollbackOnThrow: false },
+        ),
+      (error) => {
+        assert.equal(error, attemptError);
+        assert.equal((error as { rolledBack?: boolean }).rolledBack, false);
+        assert.equal(typeof (error as { checkpointId?: string }).checkpointId, "string");
+        return true;
+      },
+    );
+
+    assert.equal(readFileSync(path.join(root, "created.txt"), "utf8"), "created");
+  });
+
+  it("can skip success reconciliation", async () => {
+    const root = createTempWorkspace();
+    const fs = getCommonJsFs();
+    const session = createSession(root);
+
+    const attemptResult = await session.runAttempt(
+      () => {
+        fs.writeFileSync(path.join(root, "created.txt"), "created");
+        return "done";
+      },
+      { reconcileOnSuccess: false },
+    );
+
+    assert.equal(attemptResult.result, "done");
+    assert.equal(attemptResult.reconcileResult, undefined);
+    assert.equal(session.lastReconcileResult, undefined);
+  });
+
+  it("reconciles after context exec creates a file", async () => {
+    const root = createTempWorkspace();
+    const session = createSession(root);
+
+    await session.runAttempt(async ({ exec }) => {
+      await exec(process.execPath, [
+        "-e",
+        "require('node:fs').writeFileSync('exec-created.txt', 'created')",
+      ], { captureOutput: true });
+      assert.equal(session.lastReconcileResult?.created.includes("exec-created.txt"), true);
+    });
+  });
+
+  it("rejects non-zero context exec by default and triggers rollback", async () => {
+    const root = createTempWorkspace();
+    const fs = getCommonJsFs();
+    const session = createSession(root);
+
+    await assert.rejects(
+      () =>
+        session.runAttempt(async ({ exec }) => {
+          fs.writeFileSync(path.join(root, "created.txt"), "created");
+          await exec(process.execPath, ["-e", "process.exit(7)"], { captureOutput: true });
+        }),
+      (error) => {
+        assert.equal(error instanceof HyperionExecError, true);
+        assert.equal((error as HyperionExecError).result.exitCode, 7);
+        assert.equal((error as { rolledBack?: boolean }).rolledBack, true);
+        return true;
+      },
+    );
+
+    assert.equal(existsSync(path.join(root, "created.txt")), false);
+  });
+
+  it("returns non-zero exec results when rejectOnNonZero is false", async () => {
+    const root = createTempWorkspace();
+    const session = createSession(root);
+
+    const result = await session.exec(
+      process.execPath,
+      ["-e", "process.exit(9)"],
+      { captureOutput: true, rejectOnNonZero: false },
+    );
+
+    assert.equal(result.exitCode, 9);
+    assert.equal(result.signal, null);
+  });
+
+  it("captures stdout and stderr from exec", async () => {
+    const root = createTempWorkspace();
+    const session = createSession(root);
+
+    const result = await session.exec(
+      process.execPath,
+      ["-e", "console.log('out'); console.error('err');"],
+      { captureOutput: true },
+    );
+
+    assert.match(result.stdout ?? "", /out/);
+    assert.match(result.stderr ?? "", /err/);
+  });
+
   it("disposes idempotently and uninstalls the workspace interceptor", async () => {
     const root = createTempWorkspace();
     const session = createSession(root);
@@ -170,7 +334,36 @@ describe("HyperionAgentSession", () => {
       lastRollbackMs: 1,
       isDisposed: false,
     };
+    const attemptOptions: HyperionAttemptOptions = {
+      rollbackOnThrow: true,
+      reconcileOnSuccess: true,
+    };
+    const execOptions: HyperionExecOptions = {
+      captureOutput: true,
+      rejectOnNonZero: false,
+    };
+    const execResult: HyperionExecResult = {
+      command: "node",
+      args: ["--version"],
+      exitCode: 0,
+      signal: null,
+      stdout: "v20",
+    };
+    const attemptResult: HyperionAttemptResult<string> = {
+      checkpointId,
+      result: "ok",
+      reconcileResult,
+      rolledBack: false,
+    };
+    const context: Pick<HyperionAttemptContext, "checkpointId"> = {
+      checkpointId,
+    };
 
     assert.equal(diagnostics.lastReconcileResult?.checkpointId, checkpointId);
+    assert.equal(attemptOptions.rollbackOnThrow, true);
+    assert.equal(execOptions.captureOutput, true);
+    assert.equal(execResult.exitCode, 0);
+    assert.equal(attemptResult.result, "ok");
+    assert.equal(context.checkpointId, checkpointId);
   });
 });

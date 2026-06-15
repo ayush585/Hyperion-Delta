@@ -4,13 +4,18 @@ import { describe, it } from "node:test";
 import {
   DEFAULT_IGNORED_PATTERNS,
   HyperionAgentSession,
+  HyperionExecError,
   HyperionError,
   HyperionWorkspace,
   type Checkpoint,
   type CheckpointId,
   type DirtyEntry,
   type HyperionAgentSessionDiagnostics,
+  type HyperionAttemptOptions,
+  type HyperionAttemptResult,
   type HyperionConfig,
+  type HyperionExecOptions,
+  type HyperionExecResult,
   type ReconcileResult,
   type StateManifest,
   type StorageStrategyKind,
@@ -21,6 +26,7 @@ describe("package exports", () => {
     assert.equal(typeof HyperionWorkspace, "function");
     assert.equal(typeof HyperionAgentSession, "function");
     assert.equal(typeof HyperionError, "function");
+    assert.equal(typeof HyperionExecError, "function");
     assert.ok(DEFAULT_IGNORED_PATTERNS.includes("node_modules/**"));
   });
 
@@ -63,11 +69,28 @@ describe("package exports", () => {
       lastReconcileResult: reconcileResult,
       isDisposed: false,
     };
+    const attemptOptions: HyperionAttemptOptions = { rollbackOnThrow: true };
+    const execOptions: HyperionExecOptions = { captureOutput: true };
+    const execResult: HyperionExecResult = {
+      command: "node",
+      args: ["--version"],
+      exitCode: 0,
+      signal: null,
+    };
+    const attemptResult: HyperionAttemptResult<number> = {
+      checkpointId,
+      result: 1,
+      rolledBack: false,
+    };
 
     assert.equal(config.workspaceRoot, process.cwd());
     assert.equal(strategy, "pure-manifest");
     assert.equal(reconcileResult.checkpointId, checkpointId);
     assert.equal(checkpoint.id, checkpointId);
     assert.equal(diagnostics.lastReconcileResult?.checkpointId, checkpointId);
+    assert.equal(attemptOptions.rollbackOnThrow, true);
+    assert.equal(execOptions.captureOutput, true);
+    assert.equal(execResult.exitCode, 0);
+    assert.equal(attemptResult.result, 1);
   });
 });

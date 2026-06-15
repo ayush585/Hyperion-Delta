@@ -164,17 +164,21 @@ The core API is intentionally small, but agent teams should not need to manually
 
 ### Decided Mitigation: Autopilot Runner
 
-Hyperion should move the normal attempt lifecycle into a high-level runner API.
+Hyperion now moves the normal attempt lifecycle into a high-level runner API.
 
-The roadmap direction:
+Implemented foundation:
 
-- Add `session.runAttempt()` to handle snapshot, attempt execution, reconcile, rollback-on-failure, timing, and diagnostics.
-- Add `session.exec(command, args, options)` as a child-process wrapper that reconciles automatically after command completion.
-- Keep the low-level `snapshot()`, `reconcile()`, `rollback()`, and `dispose()` methods for advanced integrations.
+- `HyperionAgentSession.runAttempt()` handles snapshot, attempt execution, reconciliation, rollback-on-failure, timing, and diagnostics.
+- `HyperionAgentSession.exec()` and attempt-context `exec()` run explicit executable-plus-args child processes without shell-string execution.
+- Context `exec()` reconciles the active checkpoint after command completion.
+- Low-level `snapshot()`, `reconcile()`, `rollback()`, and `dispose()` remain available for advanced integrations.
+
+Remaining roadmap direction:
+
 - Make `runAttempt()` the recommended Prettiflow integration path.
 - Make cleanup automatic through existing lifecycle hooks, while still exposing explicit `dispose()`.
 
-Future API concept:
+Current API shape:
 
 ```ts
 const session = new HyperionAgentSession(process.cwd());

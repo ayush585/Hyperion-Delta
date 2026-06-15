@@ -44,18 +44,18 @@ The production SDK surface is exposed as `@prettiflow/hyperion-delta`. Prettiflo
 import { HyperionAgentSession } from "@prettiflow/hyperion-delta";
 
 const session = new HyperionAgentSession(process.cwd());
-const checkpointId = await session.snapshot();
+
 try {
-  await runAgentAttempt();
-  await session.reconcile(checkpointId);
-} catch {
-  await session.rollback(checkpointId);
+  await session.runAttempt(async ({ exec }) => {
+    await runAgentAttempt();
+    await exec("npm", ["test"]);
+  });
 } finally {
   await session.dispose();
 }
 ```
 
-`HyperionAgentSession` is a thin wrapper over `HyperionWorkspace`. It installs Node fs interception by default, exposes the selected strategy, stores the last reconcile result, and records rollback timing in milliseconds. Child-process and native-tool writes are still protected by the mandatory reconcile call inside `rollback()`.
+`HyperionAgentSession` is a thin wrapper over `HyperionWorkspace`. It installs Node fs interception by default, exposes the selected strategy, stores the last reconcile result, and records rollback timing in milliseconds. `runAttempt()` creates a checkpoint, reconciles after explicit child-process execution, and rolls back automatically when the attempt throws. Child-process and native-tool writes are still protected by the mandatory reconcile call inside `rollback()`.
 
 Successful attempt checkpoint release is intentionally not a separate public API yet. For this phase, adapter users keep the workspace session alive across attempts and call `dispose()` during CLI shutdown; a dedicated commit/release method is deferred until the core checkpoint lifecycle grows that contract.
 
@@ -73,6 +73,11 @@ Core methods:
 - `reconcile(checkpointId?)`: refresh dirty-set state after child-process or native-tool writes.
 - `rollback(checkpointId)`: reconcile, restore dirty paths, delete created paths, and clean ghost directories.
 - `dispose()`: unregister hooks/interceptors and clean Hyperion-owned session state.
+
+Agent-session helpers:
+
+- `runAttempt(callback, options?)`: wrap one agent attempt with automatic snapshot, reconciliation, rollback-on-throw, and diagnostics.
+- `exec(command, args, options?)`: run an explicit executable plus argument array without shell-string execution. Inside `runAttempt()`, the context `exec()` reconciles the active checkpoint after the process exits.
 
 Public types and errors are exported from the package root, including `HyperionConfig`, `ReconcileResult`, `StorageStrategyKind`, `HyperionError`, `HyperionCapacityError`, `HyperionIntegrityError`, `HyperionPathError`, and `HyperionRollbackError`.
 
