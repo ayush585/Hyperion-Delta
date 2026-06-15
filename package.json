@@ -21,6 +21,8 @@
     "benchmark:smoke": "node scripts/run-benchmark.mjs smoke",
     "build": "tsc -p tsconfig.json",
     "build:test": "tsc -p tsconfig.test.json",
+    "package:smoke": "node scripts/package-install-smoke.mjs",
+    "release:check": "npm run typecheck && npm test && npm run build && npm pack --dry-run && npm run package:smoke",
     "typecheck": "tsc -p tsconfig.test.json --noEmit",
     "test": "npm run build:test && node --test .test-dist/test",
     "test:watch": "node --test --watch .test-dist/test"

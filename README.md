@@ -27,6 +27,53 @@ try {
 
 Successful attempt checkpoint release is intentionally not a separate public API yet. For this phase, adapter users keep the workspace session alive across attempts and call `dispose()` during CLI shutdown; a dedicated commit/release method is deferred until the core checkpoint lifecycle grows that contract.
 
+## API Reference
+
+The package exports two runtime entry points:
+
+- `HyperionWorkspace`: the core checkpoint, reconcile, rollback, VFS interception, and cleanup API.
+- `HyperionAgentSession`: a Prettiflow-oriented wrapper that installs interception by default and records diagnostics.
+
+Core methods:
+
+- `track(path | paths)`: manually register paths for future integrations that cannot use interception.
+- `snapshot()`: capture a checkpoint and return a `CheckpointId`.
+- `reconcile(checkpointId?)`: refresh dirty-set state after child-process or native-tool writes.
+- `rollback(checkpointId)`: reconcile, restore dirty paths, delete created paths, and clean ghost directories.
+- `dispose()`: unregister hooks/interceptors and clean Hyperion-owned session state.
+
+Public types and errors are exported from the package root, including `HyperionConfig`, `ReconcileResult`, `StorageStrategyKind`, `HyperionError`, `HyperionCapacityError`, `HyperionIntegrityError`, `HyperionPathError`, and `HyperionRollbackError`.
+
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full system design, failure model, and strategy router details.
+
+## Release Checks
+
+For local package readiness:
+
+```sh
+npm run release:check
+```
+
+This runs typecheck, tests, build, `npm pack --dry-run`, and a temp-project install smoke. The install smoke packs the SDK into an OS temp directory, installs it into a temporary sample project, and imports both `HyperionWorkspace` and `HyperionAgentSession` from the installed package.
+
+For a focused install smoke after an existing build:
+
+```sh
+npm run package:smoke
+```
+
+The published package is intentionally limited to `dist`, `README.md`, `ARCHITECTURE.md`, and required npm metadata. Benchmark commands are repository-checkout utilities and are not part of the SDK runtime surface.
+
+## Troubleshooting
+
+- Git unavailable: Hyperion falls back to stat-only manifests. Correctness remains, but large non-Git workspaces may start slower.
+- tmpfs unavailable: Linux `/dev/shm` acceleration is skipped and the SDK degrades to POSIX links or pure manifest restore.
+- `rsync` unavailable: POSIX-link-style benchmark rows may be skipped, and SDK behavior remains on the safest available strategy.
+- Windows or NTFS: the SDK uses the pure manifest baseline for correctness rather than POSIX-only link assumptions.
+- Ignored paths: `node_modules/**`, `.git/**`, and `.hyperion/**` are ignored by default so dependency and internal state folders are not tracked.
+- Child-process modified/deleted files: `reconcile()` detects them, and `rollback()` always reconciles first. Restoring modified or deleted files still requires a pre-mutation backup from VFS interception or a future explicit tracking integration.
+- Missing backup record: rollback fails loudly with an integrity error instead of silently corrupting or partially restoring the workspace.
+
 ## What It Measures
 
 The current benchmark compares:
