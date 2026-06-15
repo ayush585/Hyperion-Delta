@@ -3,7 +3,13 @@ import { existsSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { DEFAULT_IGNORED_PATTERNS, DEFAULT_MAX_CONCURRENT_CHECKPOINTS } from "./constants.js";
+import {
+  DEFAULT_HOT_BUFFER_MAX_FILE_BYTES,
+  DEFAULT_HOT_BUFFER_MAX_FILES,
+  DEFAULT_HOT_BUFFER_MAX_TOTAL_BYTES,
+  DEFAULT_IGNORED_PATTERNS,
+  DEFAULT_MAX_CONCURRENT_CHECKPOINTS,
+} from "./constants.js";
 import { HyperionError, HyperionPathError, HyperionRollbackError } from "./errors.js";
 import { CheckpointStore, type StoredCheckpoint } from "./internal/checkpoint-store.js";
 import {
@@ -132,6 +138,10 @@ export class HyperionWorkspace {
         checkpointNamespace: checkpoint.storageNamespace,
         checkpointId: checkpoint.id,
         sessionId: this.storageSessionId,
+        useHotBuffer: this.config.useHotBuffer,
+        hotBufferMaxFileBytes: this.config.hotBufferMaxFileBytes,
+        hotBufferMaxTotalBytes: this.config.hotBufferMaxTotalBytes,
+        hotBufferMaxFiles: this.config.hotBufferMaxFiles,
       }),
     );
 
@@ -245,6 +255,12 @@ export class HyperionWorkspace {
       maxConcurrentCheckpoints:
         inputConfig.maxConcurrentCheckpoints ?? DEFAULT_MAX_CONCURRENT_CHECKPOINTS,
       sessionRoot,
+      useHotBuffer: inputConfig.useHotBuffer ?? true,
+      hotBufferMaxFileBytes:
+        inputConfig.hotBufferMaxFileBytes ?? DEFAULT_HOT_BUFFER_MAX_FILE_BYTES,
+      hotBufferMaxTotalBytes:
+        inputConfig.hotBufferMaxTotalBytes ?? DEFAULT_HOT_BUFFER_MAX_TOTAL_BYTES,
+      hotBufferMaxFiles: inputConfig.hotBufferMaxFiles ?? DEFAULT_HOT_BUFFER_MAX_FILES,
     };
   }
 

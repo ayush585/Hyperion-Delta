@@ -8,6 +8,7 @@ import { PosixLinkStrategy } from "../src/internal/posix-link-strategy.js";
 import { PureManifestStrategy } from "../src/internal/pure-manifest-strategy.js";
 import { createCheckpointStorage } from "../src/internal/storage-factory.js";
 import { TmpfsDirtySetStrategy } from "../src/internal/tmpfs-dirty-set-strategy.js";
+import { HotDirtyBufferStrategy } from "../src/internal/hot-dirty-buffer-strategy.js";
 import type { StorageStrategyKind } from "../src/index.js";
 
 const tempRoots: string[] = [];
@@ -29,6 +30,10 @@ function createStorageOptions(
     checkpointNamespace: path.join(workspaceRoot, ".hyperion", "checkpoints", "checkpoint-1"),
     checkpointId: "checkpoint-1",
     sessionId: "session-1",
+    useHotBuffer: false,
+    hotBufferMaxFileBytes: 256 * 1024,
+    hotBufferMaxTotalBytes: 8 * 1024 * 1024,
+    hotBufferMaxFiles: 1024,
     ...(tmpfsRoot ? { tmpfsRoot } : {}),
   };
 }
@@ -85,5 +90,15 @@ describe("createCheckpointStorage", () => {
     assert.equal(posixLinkStorage instanceof PosixLinkStrategy, true);
     assert.equal(posixLinkStorage instanceof PureManifestStrategy, true);
     assert.equal(posixLinkStorage instanceof TmpfsDirtySetStrategy, false);
+  });
+
+  it("wraps selected storage in the Hot Dirty Buffer when enabled", () => {
+    const workspaceRoot = createTempRoot("hyperion-storage-factory-workspace-");
+    const storage = createCheckpointStorage({
+      ...createStorageOptions(workspaceRoot, "pure-manifest"),
+      useHotBuffer: true,
+    });
+
+    assert.equal(storage instanceof HotDirtyBufferStrategy, true);
   });
 });

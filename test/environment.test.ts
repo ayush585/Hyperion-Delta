@@ -40,6 +40,10 @@ function createConfig(overrides: Partial<ResolvedHyperionConfig> = {}): Resolved
     enableFsInterceptor: true,
     maxConcurrentCheckpoints: 64,
     sessionRoot: "session",
+    useHotBuffer: true,
+    hotBufferMaxFileBytes: 256 * 1024,
+    hotBufferMaxTotalBytes: 8 * 1024 * 1024,
+    hotBufferMaxFiles: 1024,
     ...overrides,
   };
 }

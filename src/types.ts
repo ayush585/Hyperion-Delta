@@ -10,6 +10,10 @@ export interface HyperionConfig {
   enableFsInterceptor?: boolean;
   maxConcurrentCheckpoints?: number;
   sessionRoot?: string;
+  useHotBuffer?: boolean;
+  hotBufferMaxFileBytes?: number;
+  hotBufferMaxTotalBytes?: number;
+  hotBufferMaxFiles?: number;
 }
 
 export interface ResolvedHyperionConfig {
@@ -20,6 +24,10 @@ export interface ResolvedHyperionConfig {
   enableFsInterceptor: boolean;
   maxConcurrentCheckpoints: number;
   sessionRoot: string;
+  useHotBuffer: boolean;
+  hotBufferMaxFileBytes: number;
+  hotBufferMaxTotalBytes: number;
+  hotBufferMaxFiles: number;
 }
 
 export interface ReconcileResult {

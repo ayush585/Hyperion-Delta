@@ -1,3 +1,4 @@
+import { HotDirtyBufferStrategy } from "./hot-dirty-buffer-strategy.js";
 import { PosixLinkStrategy } from "./posix-link-strategy.js";
 import { PureManifestStrategy } from "./pure-manifest-strategy.js";
 import type { StorageStrategy } from "./storage-strategy.js";
@@ -11,9 +12,31 @@ export interface CreateCheckpointStorageOptions {
   checkpointId: string;
   sessionId: string;
   tmpfsRoot?: string;
+  useHotBuffer: boolean;
+  hotBufferMaxFileBytes: number;
+  hotBufferMaxTotalBytes: number;
+  hotBufferMaxFiles: number;
 }
 
 export function createCheckpointStorage(
+  options: CreateCheckpointStorageOptions,
+): StorageStrategy {
+  const storage = createBaseCheckpointStorage(options);
+
+  if (!options.useHotBuffer) {
+    return storage;
+  }
+
+  return new HotDirtyBufferStrategy({
+    workspaceRoot: options.workspaceRoot,
+    delegate: storage,
+    maxFileBytes: options.hotBufferMaxFileBytes,
+    maxTotalBytes: options.hotBufferMaxTotalBytes,
+    maxFiles: options.hotBufferMaxFiles,
+  });
+}
+
+function createBaseCheckpointStorage(
   options: CreateCheckpointStorageOptions,
 ): StorageStrategy {
   if (options.selectedKind === "tmpfs") {

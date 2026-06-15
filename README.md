@@ -81,6 +81,8 @@ Agent-session helpers:
 
 Public types and errors are exported from the package root, including `HyperionConfig`, `ReconcileResult`, `StorageStrategyKind`, `HyperionError`, `HyperionCapacityError`, `HyperionIntegrityError`, `HyperionPathError`, and `HyperionRollbackError`.
 
+Small regular-file backups use a bounded in-memory Hot Dirty Buffer by default before spilling to the selected physical strategy. Tune it with `useHotBuffer`, `hotBufferMaxFileBytes`, `hotBufferMaxTotalBytes`, and `hotBufferMaxFiles`; the exported defaults are `256 KiB` per file, `8 MiB` total, and `1024` files.
+
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full system design, failure model, and strategy router details. The limitations and mitigation roadmap live in [LIMITATIONS.md](./LIMITATIONS.md). Release and security posture notes live in [RELEASE.md](./RELEASE.md) and [SECURITY.md](./SECURITY.md).
 
 ## Release Checks
@@ -106,7 +108,7 @@ The published package is intentionally limited to `dist`, the README/architectur
 - Git unavailable: Hyperion falls back to stat-only manifests. Correctness remains, but large non-Git workspaces may start slower.
 - tmpfs unavailable: Linux `/dev/shm` acceleration is skipped and the SDK degrades to POSIX links or pure manifest restore.
 - `rsync` unavailable: POSIX-link-style benchmark rows may be skipped, and SDK behavior remains on the safest available strategy.
-- Windows or NTFS: the SDK uses the pure manifest baseline for correctness rather than POSIX-only link assumptions.
+- Windows or NTFS: the SDK uses the pure manifest baseline for correctness rather than POSIX-only link assumptions. Small VFS-backed edits are accelerated by the Hot Dirty Buffer before spilling to disk.
 - Ignored paths: `node_modules/**`, `.git/**`, and `.hyperion/**` are ignored by default so dependency and internal state folders are not tracked.
 - Child-process modified/deleted files: `reconcile()` detects them, and `rollback()` always reconciles first. Restoring modified or deleted files still requires a pre-mutation backup from VFS interception or a future explicit tracking integration.
 - Missing backup record: rollback fails loudly with an integrity error instead of silently corrupting or partially restoring the workspace.

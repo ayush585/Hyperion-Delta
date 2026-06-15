@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  DEFAULT_HOT_BUFFER_MAX_FILE_BYTES,
+  DEFAULT_HOT_BUFFER_MAX_FILES,
+  DEFAULT_HOT_BUFFER_MAX_TOTAL_BYTES,
   DEFAULT_IGNORED_PATTERNS,
   HyperionAgentSession,
   HyperionExecError,
@@ -27,12 +30,21 @@ describe("package exports", () => {
     assert.equal(typeof HyperionAgentSession, "function");
     assert.equal(typeof HyperionError, "function");
     assert.equal(typeof HyperionExecError, "function");
+    assert.equal(typeof DEFAULT_HOT_BUFFER_MAX_FILE_BYTES, "number");
+    assert.equal(typeof DEFAULT_HOT_BUFFER_MAX_TOTAL_BYTES, "number");
+    assert.equal(typeof DEFAULT_HOT_BUFFER_MAX_FILES, "number");
     assert.ok(DEFAULT_IGNORED_PATTERNS.includes("node_modules/**"));
   });
 
   it("exports public type contracts", () => {
     const checkpointId: CheckpointId = "checkpoint";
-    const config: HyperionConfig = { workspaceRoot: process.cwd() };
+    const config: HyperionConfig = {
+      workspaceRoot: process.cwd(),
+      useHotBuffer: true,
+      hotBufferMaxFileBytes: DEFAULT_HOT_BUFFER_MAX_FILE_BYTES,
+      hotBufferMaxTotalBytes: DEFAULT_HOT_BUFFER_MAX_TOTAL_BYTES,
+      hotBufferMaxFiles: DEFAULT_HOT_BUFFER_MAX_FILES,
+    };
     const strategy: StorageStrategyKind = "pure-manifest";
     const reconcileResult: ReconcileResult = {
       checkpointId,
@@ -84,6 +96,7 @@ describe("package exports", () => {
     };
 
     assert.equal(config.workspaceRoot, process.cwd());
+    assert.equal(config.useHotBuffer, true);
     assert.equal(strategy, "pure-manifest");
     assert.equal(reconcileResult.checkpointId, checkpointId);
     assert.equal(checkpoint.id, checkpointId);

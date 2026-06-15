@@ -59,15 +59,19 @@ The semantics stay consistent, but latency is not identical across operating sys
 
 ### Decided Mitigation: Hot Dirty Buffer
 
-Hyperion should add a cross-platform Hot Dirty Buffer: a bounded in-memory backup tier for small dirty files.
+Hyperion now has the foundation for a cross-platform Hot Dirty Buffer: a bounded in-memory backup tier for small dirty files.
 
-The roadmap direction:
+Implemented foundation:
 
-- Add a storage tier between tmpfs and filesystem-backed manifest restore.
-- Store small pre-mutation file contents in process memory up to strict byte and file-count limits.
-- Spill to the existing storage strategy when a file is too large or memory pressure limits are reached.
-- Use the same atomic restore semantics as the existing rollback engine.
+- Small regular-file pre-mutation backups can be stored in process memory.
+- Memory use is bounded by per-file, total-byte, and file-count limits.
+- Files spill to the selected storage strategy when they exceed those bounds.
+- Restore uses same-directory temp files followed by atomic rename, matching existing rollback semantics.
+
+Remaining roadmap direction:
+
 - Expose diagnostics showing whether a checkpoint used `tmpfs`, `hot-buffer`, `posix-link`, or `pure-manifest`.
+- Explore Windows-native acceleration such as NTFS hard links, Windows Dev Drive, and ReFS block cloning.
 
 Future conceptual strategy shape:
 

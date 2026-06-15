@@ -110,6 +110,10 @@ function createStorageOptions(
     checkpointNamespace: path.join(workspaceRoot, ".hyperion", "checkpoints", "checkpoint-1"),
     checkpointId: "checkpoint-1",
     sessionId: "session-1",
+    useHotBuffer: false,
+    hotBufferMaxFileBytes: 256 * 1024,
+    hotBufferMaxTotalBytes: 8 * 1024 * 1024,
+    hotBufferMaxFiles: 1024,
     ...(tmpfsRoot ? { tmpfsRoot } : {}),
   };
 }

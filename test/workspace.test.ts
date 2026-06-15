@@ -14,6 +14,9 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
 import {
+  DEFAULT_HOT_BUFFER_MAX_FILE_BYTES,
+  DEFAULT_HOT_BUFFER_MAX_FILES,
+  DEFAULT_HOT_BUFFER_MAX_TOTAL_BYTES,
   DEFAULT_IGNORED_PATTERNS,
   HyperionCapacityError,
   HyperionError,
@@ -39,6 +42,7 @@ import { probeSessionDeviceInfo, type SessionFsAdapter } from "../src/internal/s
 import type { StorageStrategy } from "../src/internal/storage-strategy.js";
 import { TmpfsDirtySetStrategy } from "../src/internal/tmpfs-dirty-set-strategy.js";
 import type { EnvironmentProfile } from "../src/internal/environment.js";
+import { HotDirtyBufferStrategy } from "../src/internal/hot-dirty-buffer-strategy.js";
 
 const tempRoots: string[] = [];
 let lifecycleAdapter: FakeLifecycleProcessAdapter;
@@ -287,6 +291,29 @@ describe("HyperionWorkspace", () => {
     assert.equal(workspace.config.useTmpfs, false);
   });
 
+  it("resolves Hot Dirty Buffer defaults and custom bounds", () => {
+    const root = createTempWorkspace();
+    const defaultWorkspace = new HyperionWorkspace(root);
+
+    assert.equal(defaultWorkspace.config.useHotBuffer, true);
+    assert.equal(defaultWorkspace.config.hotBufferMaxFileBytes, DEFAULT_HOT_BUFFER_MAX_FILE_BYTES);
+    assert.equal(defaultWorkspace.config.hotBufferMaxTotalBytes, DEFAULT_HOT_BUFFER_MAX_TOTAL_BYTES);
+    assert.equal(defaultWorkspace.config.hotBufferMaxFiles, DEFAULT_HOT_BUFFER_MAX_FILES);
+
+    const customWorkspace = new HyperionWorkspace({
+      workspaceRoot: root,
+      useHotBuffer: false,
+      hotBufferMaxFileBytes: 16,
+      hotBufferMaxTotalBytes: 32,
+      hotBufferMaxFiles: 2,
+    });
+
+    assert.equal(customWorkspace.config.useHotBuffer, false);
+    assert.equal(customWorkspace.config.hotBufferMaxFileBytes, 16);
+    assert.equal(customWorkspace.config.hotBufferMaxTotalBytes, 32);
+    assert.equal(customWorkspace.config.hotBufferMaxFiles, 2);
+  });
+
   it("rejects a missing workspace root", () => {
     const root = join(tmpdir(), `hyperion-missing-${Date.now()}`);
 
@@ -457,7 +484,11 @@ describe("HyperionWorkspace", () => {
 
   it("refreshes strategy selection after lazy session root creation", async () => {
     const root = createTempWorkspace();
-    const workspace = new HyperionWorkspace({ workspaceRoot: root, useTmpfs: false });
+    const workspace = new HyperionWorkspace({
+      workspaceRoot: root,
+      useTmpfs: false,
+      useHotBuffer: false,
+    });
     forceWorkspaceEnvironmentProfile(workspace, {
       platform: "darwin",
       hasRsync: true,
@@ -471,6 +502,31 @@ describe("HyperionWorkspace", () => {
 
     assert.equal(workspace.strategy, "posix-link");
     assert.equal(storage instanceof PosixLinkStrategy, true);
+  });
+
+  it("wraps checkpoint storage in the Hot Dirty Buffer by default", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+
+    const checkpointId = await workspace.snapshot();
+    const storage = getWorkspaceCheckpointStorage(workspace, checkpointId);
+
+    assert.equal(storage instanceof HotDirtyBufferStrategy, true);
+    assert.ok(["tmpfs", "posix-link", "pure-manifest"].includes(workspace.strategy));
+  });
+
+  it("can disable Hot Dirty Buffer checkpoint storage wrapping", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace({
+      workspaceRoot: root,
+      useTmpfs: false,
+      useHotBuffer: false,
+    });
+
+    const checkpointId = await workspace.snapshot();
+    const storage = getWorkspaceCheckpointStorage(workspace, checkpointId);
+
+    assert.equal(storage instanceof HotDirtyBufferStrategy, false);
   });
 
   it("creates a checkpoint when snapshot is called", async () => {
