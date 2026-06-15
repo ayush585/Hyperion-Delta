@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import assert from "node:assert/strict";
-import { afterEach, describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it } from "node:test";
 
 import {
   DEFAULT_IGNORED_PATTERNS,
@@ -17,6 +17,14 @@ import {
   type CheckpointId,
 } from "../src/index.js";
 import { createIgnoreMatcher } from "../src/internal/ignore.js";
+import {
+  LIFECYCLE_EVENTS,
+  setDefaultLifecycleProcessAdapterForTests,
+  type LifecycleEvent,
+  type LifecycleHandler,
+  type LifecycleProcessAdapter,
+  type LifecycleSignal,
+} from "../src/internal/lifecycle.js";
 import { normalizeWorkspacePath } from "../src/internal/path.js";
 import { PosixLinkStrategy } from "../src/internal/posix-link-strategy.js";
 import { probeSessionDeviceInfo, type SessionFsAdapter } from "../src/internal/session.js";
@@ -25,6 +33,40 @@ import { TmpfsDirtySetStrategy } from "../src/internal/tmpfs-dirty-set-strategy.
 import type { EnvironmentProfile } from "../src/internal/environment.js";
 
 const tempRoots: string[] = [];
+let lifecycleAdapter: FakeLifecycleProcessAdapter;
+
+class FakeLifecycleProcessAdapter implements LifecycleProcessAdapter {
+  public readonly pid = 12345;
+  private readonly handlers = new Map<LifecycleEvent, Set<LifecycleHandler>>();
+
+  public once(event: LifecycleEvent, handler: LifecycleHandler): void {
+    const handlers = this.handlers.get(event) ?? new Set<LifecycleHandler>();
+    handlers.add(handler);
+    this.handlers.set(event, handlers);
+  }
+
+  public off(event: LifecycleEvent, handler: LifecycleHandler): void {
+    this.handlers.get(event)?.delete(handler);
+  }
+
+  public kill(_pid: number, _signal: LifecycleSignal): void {
+    return;
+  }
+
+  public rethrow(reason: unknown): never {
+    throw reason instanceof Error ? reason : new Error(String(reason));
+  }
+
+  public listenerCount(event: LifecycleEvent): number {
+    return this.handlers.get(event)?.size ?? 0;
+  }
+
+  public emit(event: LifecycleEvent, ...args: unknown[]): void {
+    for (const handler of [...(this.handlers.get(event) ?? [])]) {
+      handler(...args);
+    }
+  }
+}
 
 function createTempWorkspace(): string {
   const root = mkdtempSync(join(tmpdir(), "hyperion-workspace-"));
@@ -157,6 +199,26 @@ function createTmpfsCheckpointStorage(
   });
 }
 
+function createCleanupTrackingStorage(
+  onCleanup: () => void,
+): StorageStrategy {
+  return {
+    backupFile() {
+      throw new Error("backupFile is not used by this test storage");
+    },
+    restoreFile() {
+      throw new Error("restoreFile is not used by this test storage");
+    },
+    deleteCreatedPath() {
+      throw new Error("deleteCreatedPath is not used by this test storage");
+    },
+    getBackupRecord() {
+      return undefined;
+    },
+    cleanup: onCleanup,
+  };
+}
+
 function runChildProcessScript(root: string, script: string): void {
   execFileSync(process.execPath, ["-e", script], {
     cwd: root,
@@ -164,7 +226,14 @@ function runChildProcessScript(root: string, script: string): void {
   });
 }
 
+beforeEach(() => {
+  lifecycleAdapter = new FakeLifecycleProcessAdapter();
+  setDefaultLifecycleProcessAdapterForTests(lifecycleAdapter);
+});
+
 afterEach(() => {
+  setDefaultLifecycleProcessAdapterForTests(undefined);
+
   while (tempRoots.length > 0) {
     const root = tempRoots.pop();
     if (root) {
@@ -776,6 +845,86 @@ describe("HyperionWorkspace", () => {
       deleted: [],
       renamed: [],
     });
+  });
+
+  it("registers lifecycle hooks during construction", () => {
+    const root = createTempWorkspace();
+    new HyperionWorkspace(root);
+
+    for (const event of LIFECYCLE_EVENTS) {
+      assert.equal(lifecycleAdapter.listenerCount(event), 1);
+    }
+  });
+
+  it("unregisters lifecycle hooks during idempotent dispose", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+
+    await workspace.dispose();
+    await workspace.dispose();
+
+    for (const event of LIFECYCLE_EVENTS) {
+      assert.equal(lifecycleAdapter.listenerCount(event), 0);
+    }
+  });
+
+  it("emergency cleanup uninstalls the fs interceptor", () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    workspace.installFsInterceptor();
+
+    lifecycleAdapter.emit("exit", 0);
+
+    assert.equal(workspace.isFsInterceptorInstalled, false);
+  });
+
+  it("emergency cleanup invokes every active checkpoint storage cleanup", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const firstId = await workspace.snapshot();
+    const secondId = await workspace.snapshot();
+    let secondCleanupCalled = false;
+    replaceWorkspaceCheckpointStorage(
+      workspace,
+      firstId,
+      createCleanupTrackingStorage(() => {
+        throw new Error("cleanup failed");
+      }),
+    );
+    replaceWorkspaceCheckpointStorage(
+      workspace,
+      secondId,
+      createCleanupTrackingStorage(() => {
+        secondCleanupCalled = true;
+      }),
+    );
+
+    lifecycleAdapter.emit("exit", 0);
+
+    assert.equal(secondCleanupCalled, true);
+  });
+
+  it("emergency cleanup touches only known checkpoint storage namespaces", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    const ownedNamespace = join(root, "owned-storage");
+    const unrelatedPath = join(root, "unrelated.txt");
+    mkdirSync(ownedNamespace, { recursive: true });
+    writeFileSync(join(ownedNamespace, "backup.txt"), "backup");
+    writeFileSync(unrelatedPath, "safe");
+    replaceWorkspaceCheckpointStorage(
+      workspace,
+      checkpointId,
+      createCleanupTrackingStorage(() => {
+        rmSync(ownedNamespace, { recursive: true, force: true });
+      }),
+    );
+
+    lifecycleAdapter.emit("exit", 0);
+
+    assert.equal(existsSync(ownedNamespace), false);
+    assert.equal(readFileSync(unrelatedPath, "utf8"), "safe");
   });
 
   it("has idempotent no-op interceptor and dispose methods", async () => {

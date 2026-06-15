@@ -12,6 +12,7 @@ import {
 } from "./internal/environment.js";
 import { GhostDirectoryCleaner } from "./internal/ghost-directory-cleaner.js";
 import { createIgnoreMatcher, type IgnoreMatcher } from "./internal/ignore.js";
+import { LifecycleCleanupRegistry } from "./internal/lifecycle.js";
 import { isPathInsideRoot, normalizeWorkspacePath } from "./internal/path.js";
 import { ReconciliationEngine } from "./internal/reconciliation-engine.js";
 import { RollbackEngine } from "./internal/rollback-engine.js";
@@ -52,8 +53,10 @@ export class HyperionWorkspace {
   private readonly rollbackEngine = new RollbackEngine();
   private readonly reconciliationEngine = new ReconciliationEngine();
   private readonly vfsInterceptor: VfsInterceptor;
+  private readonly lifecycleCleanupRegistry = new LifecycleCleanupRegistry();
   private readonly manualTrackedPaths = new Set<string>();
   private sessionDeviceInfo?: SessionDeviceInfo;
+  private emergencyCleanupCompleted = false;
   private disposed = false;
 
   public constructor(rootOrConfig: string | HyperionConfig) {
@@ -75,6 +78,10 @@ export class HyperionWorkspace {
         this.recordVfsMutations(records);
       },
     });
+    this.lifecycleCleanupRegistry.addCleanupCallback(() => {
+      this.emergencyCleanupSync();
+    });
+    this.lifecycleCleanupRegistry.register();
   }
 
   public track(pathOrPaths: string | string[]): void {
@@ -163,11 +170,9 @@ export class HyperionWorkspace {
   }
 
   public async dispose(): Promise<void> {
-    this.uninstallFsInterceptor();
-    for (const checkpointId of [...this.checkpointStorage.keys()]) {
-      this.cleanupCheckpointStorage(checkpointId);
-    }
+    this.emergencyCleanupSync();
     this.checkpointStore.clear();
+    this.lifecycleCleanupRegistry.unregister();
     this.disposed = true;
   }
 
@@ -391,6 +396,32 @@ export class HyperionWorkspace {
 
     storage.cleanup?.();
     this.checkpointStorage.delete(checkpointId);
+  }
+
+  private emergencyCleanupSync(): void {
+    if (this.emergencyCleanupCompleted) {
+      return;
+    }
+
+    this.emergencyCleanupCompleted = true;
+
+    try {
+      this.vfsInterceptor.uninstall();
+    } catch {
+      // Emergency cleanup must never throw from process lifecycle handlers.
+    }
+
+    for (const checkpointId of [...this.checkpointStorage.keys()]) {
+      const storage = this.checkpointStorage.get(checkpointId);
+
+      try {
+        storage?.cleanup?.();
+      } catch {
+        // Continue cleaning remaining checkpoint namespaces.
+      } finally {
+        this.checkpointStorage.delete(checkpointId);
+      }
+    }
   }
 }
 
