@@ -21,11 +21,11 @@ import type {
 } from "./storage-strategy.js";
 
 export class PureManifestStrategy implements StorageStrategy {
-  private readonly backupRecords = new Map<string, StorageBackupRecord>();
+  protected readonly backupRecords = new Map<string, StorageBackupRecord>();
 
   public constructor(
-    private readonly workspaceRoot: string,
-    private readonly storageNamespace: string,
+    protected readonly workspaceRoot: string,
+    protected readonly storageNamespace: string,
   ) {}
 
   public backupFile(pathOrPathLike: string): StorageBackupRecord {
@@ -64,16 +64,7 @@ export class PureManifestStrategy implements StorageStrategy {
       });
     }
 
-    const backupPath = this.toBackupPath(relativePath);
-    mkdirSync(path.dirname(backupPath), { recursive: true });
-    copyFileSync(sourcePath, backupPath);
-
-    return this.setRecord({
-      relativePath,
-      kind: "file",
-      backupPath,
-      mode: sourceStat.mode,
-    });
+    return this.backupRegularFile(relativePath, sourcePath, sourceStat.mode);
   }
 
   public restoreFile(pathOrPathLike: string): StorageRestoreResult {
@@ -113,6 +104,23 @@ export class PureManifestStrategy implements StorageStrategy {
 
   public cleanup(): void {
     // Pure Manifest storage is project-local for now; lifecycle GC owns persistent cleanup.
+  }
+
+  protected backupRegularFile(
+    relativePath: string,
+    sourcePath: string,
+    mode: number,
+  ): StorageBackupRecord {
+    const backupPath = this.toBackupPath(relativePath);
+    mkdirSync(path.dirname(backupPath), { recursive: true });
+    copyFileSync(sourcePath, backupPath);
+
+    return this.setRecord({
+      relativePath,
+      kind: "file",
+      backupPath,
+      mode,
+    });
   }
 
   private restoreRegularFile(record: StorageBackupRecord): StorageRestoreResult {
@@ -170,16 +178,16 @@ export class PureManifestStrategy implements StorageStrategy {
     return record;
   }
 
-  private setRecord(record: StorageBackupRecord): StorageBackupRecord {
+  protected setRecord(record: StorageBackupRecord): StorageBackupRecord {
     this.backupRecords.set(record.relativePath, record);
     return record;
   }
 
-  private toWorkspacePath(relativePath: string): string {
+  protected toWorkspacePath(relativePath: string): string {
     return path.join(this.workspaceRoot, ...relativePath.split("/"));
   }
 
-  private toBackupPath(relativePath: string): string {
+  protected toBackupPath(relativePath: string): string {
     return path.join(this.storageNamespace, "files", ...relativePath.split("/"));
   }
 }

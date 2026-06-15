@@ -1,3 +1,4 @@
+import { PosixLinkStrategy } from "./posix-link-strategy.js";
 import { PureManifestStrategy } from "./pure-manifest-strategy.js";
 import type { StorageStrategy } from "./storage-strategy.js";
 import { TmpfsDirtySetStrategy } from "./tmpfs-dirty-set-strategy.js";
@@ -27,6 +28,10 @@ export function createCheckpointStorage(
     } catch {
       return createPureManifestStorage(options);
     }
+  }
+
+  if (options.selectedKind === "posix-link") {
+    return new PosixLinkStrategy(options.workspaceRoot, options.checkpointNamespace);
   }
 
   return createPureManifestStorage(options);

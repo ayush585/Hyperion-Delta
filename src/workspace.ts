@@ -41,11 +41,10 @@ import type {
 export class HyperionWorkspace {
   public readonly root: string;
   public readonly config: ResolvedHyperionConfig;
-  public readonly strategy: StorageStrategyKind;
 
   private readonly ignoreMatcher: IgnoreMatcher;
-  private readonly environmentProfile: EnvironmentProfile;
-  private readonly strategySelection: StrategySelection;
+  private environmentProfile: EnvironmentProfile;
+  private strategySelection: StrategySelection;
   private readonly stateEngine: HybridStateEngine;
   private readonly checkpointStore: CheckpointStore;
   private readonly checkpointStorage = new Map<CheckpointId, StorageStrategy>();
@@ -67,7 +66,6 @@ export class HyperionWorkspace {
       sessionRoot: config.sessionRoot,
     });
     this.strategySelection = selectStorageStrategy(config, this.environmentProfile);
-    this.strategy = this.strategySelection.kind;
     this.stateEngine = new HybridStateEngine(config, {
       gitAvailableHint: this.environmentProfile.gitAvailable,
     });
@@ -103,9 +101,10 @@ export class HyperionWorkspace {
     this.checkpointStore.collectDisposed();
     this.checkpointStore.ensureCapacityAvailable();
     this.ensureSessionRoot();
+    const deviceInfo = this.probeSessionDeviceInfo();
+    this.refreshStrategySelection(deviceInfo);
 
     const baseline = this.stateEngine.captureManifest();
-    const deviceInfo = this.probeSessionDeviceInfo();
     const checkpoint = this.checkpointStore.createCheckpoint({
       baseline,
       deviceId: deviceInfo.workspaceDeviceId,
@@ -192,6 +191,10 @@ export class HyperionWorkspace {
     return this.disposed;
   }
 
+  public get strategy(): StorageStrategyKind {
+    return this.strategySelection.kind;
+  }
+
   private resolveConfig(rootOrConfig: string | HyperionConfig): ResolvedHyperionConfig {
     const inputConfig =
       typeof rootOrConfig === "string" ? { workspaceRoot: rootOrConfig } : rootOrConfig;
@@ -240,6 +243,14 @@ export class HyperionWorkspace {
     const deviceInfo = probeSessionDeviceInfo(this.root, this.ensureSessionRoot());
     this.sessionDeviceInfo = deviceInfo;
     return deviceInfo;
+  }
+
+  private refreshStrategySelection(deviceInfo: SessionDeviceInfo): void {
+    this.environmentProfile = {
+      ...this.environmentProfile,
+      sameDeviceForLinks: deviceInfo.sameDevice,
+    };
+    this.strategySelection = selectStorageStrategy(this.config, this.environmentProfile);
   }
 
   private getCheckpoint(checkpointId: CheckpointId) {

@@ -18,9 +18,11 @@ import {
 } from "../src/index.js";
 import { createIgnoreMatcher } from "../src/internal/ignore.js";
 import { normalizeWorkspacePath } from "../src/internal/path.js";
+import { PosixLinkStrategy } from "../src/internal/posix-link-strategy.js";
 import { probeSessionDeviceInfo, type SessionFsAdapter } from "../src/internal/session.js";
 import type { StorageStrategy } from "../src/internal/storage-strategy.js";
 import { TmpfsDirtySetStrategy } from "../src/internal/tmpfs-dirty-set-strategy.js";
+import type { EnvironmentProfile } from "../src/internal/environment.js";
 
 const tempRoots: string[] = [];
 
@@ -116,6 +118,30 @@ function replaceWorkspaceCheckpointStorage(
       checkpointStorage: Map<CheckpointId, StorageStrategy>;
     }
   ).checkpointStorage.set(checkpointId, storage);
+}
+
+function getWorkspaceCheckpointStorage(
+  workspace: HyperionWorkspace,
+  checkpointId: CheckpointId,
+): StorageStrategy | undefined {
+  return (
+    workspace as unknown as {
+      checkpointStorage: Map<CheckpointId, StorageStrategy>;
+    }
+  ).checkpointStorage.get(checkpointId);
+}
+
+function forceWorkspaceEnvironmentProfile(
+  workspace: HyperionWorkspace,
+  overrides: Partial<EnvironmentProfile>,
+): void {
+  const target = workspace as unknown as {
+    environmentProfile: EnvironmentProfile;
+  };
+  target.environmentProfile = {
+    ...target.environmentProfile,
+    ...overrides,
+  };
 }
 
 function createTmpfsCheckpointStorage(
@@ -330,6 +356,24 @@ describe("HyperionWorkspace", () => {
       sessionDeviceId: 20,
       sameDevice: false,
     });
+  });
+
+  it("refreshes strategy selection after lazy session root creation", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace({ workspaceRoot: root, useTmpfs: false });
+    forceWorkspaceEnvironmentProfile(workspace, {
+      platform: "darwin",
+      hasRsync: true,
+      hasDevShm: false,
+      devShmWritable: false,
+      sameDeviceForLinks: false,
+    });
+
+    const checkpointId = await workspace.snapshot();
+    const storage = getWorkspaceCheckpointStorage(workspace, checkpointId);
+
+    assert.equal(workspace.strategy, "posix-link");
+    assert.equal(storage instanceof PosixLinkStrategy, true);
   });
 
   it("creates a checkpoint when snapshot is called", async () => {

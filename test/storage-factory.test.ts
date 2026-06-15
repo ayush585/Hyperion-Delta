@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 
+import { PosixLinkStrategy } from "../src/internal/posix-link-strategy.js";
 import { PureManifestStrategy } from "../src/internal/pure-manifest-strategy.js";
 import { createCheckpointStorage } from "../src/internal/storage-factory.js";
 import { TmpfsDirtySetStrategy } from "../src/internal/tmpfs-dirty-set-strategy.js";
@@ -66,16 +67,22 @@ describe("createCheckpointStorage", () => {
     assert.equal(storage instanceof TmpfsDirtySetStrategy, false);
   });
 
-  it("routes non-tmpfs selected strategies to Pure Manifest for this phase", () => {
+  it("routes Pure Manifest selections to Pure Manifest storage", () => {
     const workspaceRoot = createTempRoot("hyperion-storage-factory-workspace-");
     const pureManifestStorage = createCheckpointStorage(
       createStorageOptions(workspaceRoot, "pure-manifest"),
     );
+
+    assert.equal(pureManifestStorage instanceof PureManifestStrategy, true);
+  });
+
+  it("routes posix-link selections to POSIX link storage", () => {
+    const workspaceRoot = createTempRoot("hyperion-storage-factory-workspace-");
     const posixLinkStorage = createCheckpointStorage(
       createStorageOptions(workspaceRoot, "posix-link"),
     );
 
-    assert.equal(pureManifestStorage instanceof PureManifestStrategy, true);
+    assert.equal(posixLinkStorage instanceof PosixLinkStrategy, true);
     assert.equal(posixLinkStorage instanceof PureManifestStrategy, true);
     assert.equal(posixLinkStorage instanceof TmpfsDirtySetStrategy, false);
   });
