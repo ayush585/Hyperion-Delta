@@ -76,7 +76,7 @@ Core methods:
 
 Public types and errors are exported from the package root, including `HyperionConfig`, `ReconcileResult`, `StorageStrategyKind`, `HyperionError`, `HyperionCapacityError`, `HyperionIntegrityError`, `HyperionPathError`, and `HyperionRollbackError`.
 
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full system design, failure model, and strategy router details. Release and security posture notes live in [RELEASE.md](./RELEASE.md) and [SECURITY.md](./SECURITY.md).
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full system design, failure model, and strategy router details. The limitations and mitigation roadmap live in [LIMITATIONS.md](./LIMITATIONS.md). Release and security posture notes live in [RELEASE.md](./RELEASE.md) and [SECURITY.md](./SECURITY.md).
 
 ## Release Checks
 

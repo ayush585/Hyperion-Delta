@@ -15,7 +15,8 @@
     "dist",
     "assets/hyperion-benchmark-hero.png",
     "README.md",
-    "ARCHITECTURE.md"
+    "ARCHITECTURE.md",
+    "LIMITATIONS.md"
   ],
   "scripts": {
     "benchmark": "node scripts/run-benchmark.mjs full",

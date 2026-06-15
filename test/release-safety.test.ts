@@ -14,6 +14,7 @@ describe("release safety", () => {
       "assets/hyperion-benchmark-hero.png",
       "README.md",
       "ARCHITECTURE.md",
+      "LIMITATIONS.md",
     ]);
     assert.equal(packageJson.dependencies, undefined);
     assert.equal(packageJson.type, "module");
