@@ -4,6 +4,29 @@ Hyperion Delta-Bench is a zero-dependency TypeScript timing harness for local ag
 
 The benchmark synthesizes a 50,000-file TypeScript workspace nested 10 directories deep, then measures 50 rollback cycles with `process.hrtime.bigint()`.
 
+## SDK Quickstart
+
+The production SDK surface is exposed as `@prettiflow/hyperion-delta`. Prettiflow-style agent loops can use the adapter wrapper with only the checkpoint lifecycle in their execution path:
+
+```ts
+import { HyperionAgentSession } from "@prettiflow/hyperion-delta";
+
+const session = new HyperionAgentSession(process.cwd());
+const checkpointId = await session.snapshot();
+try {
+  await runAgentAttempt();
+  await session.reconcile(checkpointId);
+} catch {
+  await session.rollback(checkpointId);
+} finally {
+  await session.dispose();
+}
+```
+
+`HyperionAgentSession` is a thin wrapper over `HyperionWorkspace`. It installs Node fs interception by default, exposes the selected strategy, stores the last reconcile result, and records rollback timing in milliseconds. Child-process and native-tool writes are still protected by the mandatory reconcile call inside `rollback()`.
+
+Successful attempt checkpoint release is intentionally not a separate public API yet. For this phase, adapter users keep the workspace session alive across attempts and call `dispose()` during CLI shutdown; a dedicated commit/release method is deferred until the core checkpoint lifecycle grows that contract.
+
 ## What It Measures
 
 The current benchmark compares:

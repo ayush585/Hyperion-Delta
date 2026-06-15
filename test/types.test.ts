@@ -3,11 +3,13 @@ import { describe, it } from "node:test";
 
 import {
   DEFAULT_IGNORED_PATTERNS,
+  HyperionAgentSession,
   HyperionError,
   HyperionWorkspace,
   type Checkpoint,
   type CheckpointId,
   type DirtyEntry,
+  type HyperionAgentSessionDiagnostics,
   type HyperionConfig,
   type ReconcileResult,
   type StateManifest,
@@ -17,6 +19,7 @@ import {
 describe("package exports", () => {
   it("exports the public runtime API", () => {
     assert.equal(typeof HyperionWorkspace, "function");
+    assert.equal(typeof HyperionAgentSession, "function");
     assert.equal(typeof HyperionError, "function");
     assert.ok(DEFAULT_IGNORED_PATTERNS.includes("node_modules/**"));
   });
@@ -55,10 +58,16 @@ describe("package exports", () => {
       status: "active",
       createdAt: Date.now(),
     };
+    const diagnostics: HyperionAgentSessionDiagnostics = {
+      strategy,
+      lastReconcileResult: reconcileResult,
+      isDisposed: false,
+    };
 
     assert.equal(config.workspaceRoot, process.cwd());
     assert.equal(strategy, "pure-manifest");
     assert.equal(reconcileResult.checkpointId, checkpointId);
     assert.equal(checkpoint.id, checkpointId);
+    assert.equal(diagnostics.lastReconcileResult?.checkpointId, checkpointId);
   });
 });
