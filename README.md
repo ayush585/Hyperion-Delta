@@ -83,6 +83,8 @@ Public types and errors are exported from the package root, including `HyperionC
 
 Small regular-file backups use a bounded in-memory Hot Dirty Buffer by default before spilling to the selected physical strategy. Tune it with `useHotBuffer`, `hotBufferMaxFileBytes`, `hotBufferMaxTotalBytes`, and `hotBufferMaxFiles`; the exported defaults are `256 KiB` per file, `8 MiB` total, and `1024` files.
 
+Ignored dependency and generated-output roots are still excluded from broad scans, but VFS-captured writes into ignored paths can be made fail-fast with `strictIgnoredWrites: true`. Explicit `track()` calls may name exact ignored paths for future tool-adapter integrations without expanding broad reconciliation walks.
+
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full system design, failure model, and strategy router details. The limitations and mitigation roadmap live in [LIMITATIONS.md](./LIMITATIONS.md). Release and security posture notes live in [RELEASE.md](./RELEASE.md) and [SECURITY.md](./SECURITY.md).
 
 ## Release Checks
@@ -110,6 +112,7 @@ The published package is intentionally limited to `dist`, the README/architectur
 - `rsync` unavailable: POSIX-link-style benchmark rows may be skipped, and SDK behavior remains on the safest available strategy.
 - Windows or NTFS: the SDK uses the pure manifest baseline for correctness rather than POSIX-only link assumptions. Small VFS-backed edits are accelerated by the Hot Dirty Buffer before spilling to disk.
 - Ignored paths: `node_modules/**`, `.git/**`, and `.hyperion/**` are ignored by default so dependency and internal state folders are not tracked.
+- Strict ignored writes: set `strictIgnoredWrites: true` to throw `HyperionIgnoredPathError` before in-process VFS writes mutate ignored roots.
 - Child-process modified/deleted files: `reconcile()` detects them, and `rollback()` always reconciles first. Restoring modified or deleted files still requires a pre-mutation backup from VFS interception or a future explicit tracking integration.
 - Missing backup record: rollback fails loudly with an integrity error instead of silently corrupting or partially restoring the workspace.
 

@@ -14,6 +14,7 @@ export interface HyperionConfig {
   hotBufferMaxFileBytes?: number;
   hotBufferMaxTotalBytes?: number;
   hotBufferMaxFiles?: number;
+  strictIgnoredWrites?: boolean;
 }
 
 export interface ResolvedHyperionConfig {
@@ -28,6 +29,7 @@ export interface ResolvedHyperionConfig {
   hotBufferMaxFileBytes: number;
   hotBufferMaxTotalBytes: number;
   hotBufferMaxFiles: number;
+  strictIgnoredWrites: boolean;
 }
 
 export interface ReconcileResult {

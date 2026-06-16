@@ -9,6 +9,7 @@ import {
   HyperionAgentSession,
   HyperionExecError,
   HyperionError,
+  HyperionIgnoredPathError,
   HyperionWorkspace,
   type Checkpoint,
   type CheckpointId,
@@ -30,6 +31,7 @@ describe("package exports", () => {
     assert.equal(typeof HyperionAgentSession, "function");
     assert.equal(typeof HyperionError, "function");
     assert.equal(typeof HyperionExecError, "function");
+    assert.equal(typeof HyperionIgnoredPathError, "function");
     assert.equal(typeof DEFAULT_HOT_BUFFER_MAX_FILE_BYTES, "number");
     assert.equal(typeof DEFAULT_HOT_BUFFER_MAX_TOTAL_BYTES, "number");
     assert.equal(typeof DEFAULT_HOT_BUFFER_MAX_FILES, "number");
@@ -44,6 +46,7 @@ describe("package exports", () => {
       hotBufferMaxFileBytes: DEFAULT_HOT_BUFFER_MAX_FILE_BYTES,
       hotBufferMaxTotalBytes: DEFAULT_HOT_BUFFER_MAX_TOTAL_BYTES,
       hotBufferMaxFiles: DEFAULT_HOT_BUFFER_MAX_FILES,
+      strictIgnoredWrites: true,
     };
     const strategy: StorageStrategyKind = "pure-manifest";
     const reconcileResult: ReconcileResult = {
@@ -97,6 +100,7 @@ describe("package exports", () => {
 
     assert.equal(config.workspaceRoot, process.cwd());
     assert.equal(config.useHotBuffer, true);
+    assert.equal(config.strictIgnoredWrites, true);
     assert.equal(strategy, "pure-manifest");
     assert.equal(reconcileResult.checkpointId, checkpointId);
     assert.equal(checkpoint.id, checkpointId);

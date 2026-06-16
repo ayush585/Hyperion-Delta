@@ -6,7 +6,13 @@ import path from "node:path";
 import { once } from "node:events";
 import { afterEach, describe, it } from "node:test";
 
-import { HyperionWorkspace, type Checkpoint, type CheckpointId } from "../src/index.js";
+import {
+  HyperionIgnoredPathError,
+  HyperionWorkspace,
+  type Checkpoint,
+  type CheckpointId,
+  type HyperionConfig,
+} from "../src/index.js";
 
 const require = createRequire(import.meta.url);
 const tempRoots: string[] = [];
@@ -26,10 +32,31 @@ function createTempWorkspace(): string {
   return root;
 }
 
-function createWorkspace(root: string): HyperionWorkspace {
-  const workspace = new HyperionWorkspace(root);
+function createWorkspace(
+  root: string,
+  config: Partial<Omit<HyperionConfig, "workspaceRoot">> = {},
+): HyperionWorkspace {
+  const workspace = new HyperionWorkspace({ workspaceRoot: root, ...config });
   activeWorkspaces.push(workspace);
   return workspace;
+}
+
+function getIgnoredWriteEvents(workspace: HyperionWorkspace): Array<{
+  relativePath: string;
+  kind: string;
+  capturedAt: number;
+}> {
+  return [
+    ...(
+      workspace as unknown as {
+        ignoredWriteEvents: Array<{
+          relativePath: string;
+          kind: string;
+          capturedAt: number;
+        }>;
+      }
+    ).ignoredWriteEvents,
+  ];
 }
 
 function getWorkspaceCheckpoint(
@@ -232,6 +259,63 @@ describe("VFS interceptor sync APIs", () => {
     fs.writeFileSync(path.join(outsideRoot, "outside.txt"), "outside");
 
     assert.equal(getWorkspaceCheckpoint(workspace, checkpointId)?.dirty.size, 0);
+    assert.deepEqual(
+      getIgnoredWriteEvents(workspace).map((event) => event.relativePath),
+      ["node_modules/pkg", "node_modules/pkg/index.js"],
+    );
+  });
+
+  it("blocks ignored writeFileSync mutations in strict mode before writing", async () => {
+    const root = createTempWorkspace();
+    mkdirSync(path.join(root, "node_modules", "pkg"), { recursive: true });
+    mkdirSync(path.join(root, ".git"), { recursive: true });
+    mkdirSync(path.join(root, ".hyperion", "scratch"), { recursive: true });
+    mkdirSync(path.join(root, "dist"), { recursive: true });
+    const workspace = createWorkspace(root, { strictIgnoredWrites: true });
+    await workspace.snapshot();
+    const fs = getCommonJsFs();
+
+    workspace.installFsInterceptor();
+
+    for (const relativePath of [
+      path.join("node_modules", "pkg", "index.js"),
+      path.join(".git", "config"),
+      path.join(".hyperion", "scratch", "file.txt"),
+      path.join("dist", "output.js"),
+    ]) {
+      const targetPath = path.join(root, relativePath);
+      assert.throws(
+        () => fs.writeFileSync(targetPath, "blocked"),
+        HyperionIgnoredPathError,
+      );
+      assert.equal(existsSync(targetPath), false);
+    }
+
+    assert.deepEqual(
+      getIgnoredWriteEvents(workspace).map((event) => event.relativePath),
+      [
+        "node_modules/pkg/index.js",
+        ".git/config",
+        ".hyperion/scratch/file.txt",
+        "dist/output.js",
+      ],
+    );
+  });
+
+  it("allows outside-workspace writes in strict ignored-write mode", async () => {
+    const root = createTempWorkspace();
+    const outsideRoot = mkdtempSync(path.join(tmpdir(), "hyperion-vfs-outside-"));
+    tempRoots.push(outsideRoot);
+    const workspace = createWorkspace(root, { strictIgnoredWrites: true });
+    await workspace.snapshot();
+    const fs = getCommonJsFs();
+    const outsidePath = path.join(outsideRoot, "outside.txt");
+
+    workspace.installFsInterceptor();
+    fs.writeFileSync(outsidePath, "outside");
+
+    assert.equal(readFileSync(outsidePath, "utf8"), "outside");
+    assert.equal(getIgnoredWriteEvents(workspace).length, 0);
   });
 
   it("restores original fs functions on uninstall and remains idempotent", () => {
@@ -411,6 +495,27 @@ describe("VFS interceptor callback APIs", () => {
     await waitForCallback((callback) => fs.writeFile(path.join(outsideRoot, "outside.txt"), "outside", callback));
 
     assert.equal(getWorkspaceCheckpoint(workspace, checkpointId)?.dirty.size, 0);
+    assert.deepEqual(
+      getIgnoredWriteEvents(workspace).map((event) => event.relativePath),
+      ["node_modules/pkg", "node_modules/pkg/index.js"],
+    );
+  });
+
+  it("blocks ignored callback writes in strict mode before writing", async () => {
+    const root = createTempWorkspace();
+    mkdirSync(path.join(root, "node_modules", "pkg"), { recursive: true });
+    const workspace = createWorkspace(root, { strictIgnoredWrites: true });
+    await workspace.snapshot();
+    const fs = getCommonJsFs();
+    const targetPath = path.join(root, "node_modules", "pkg", "index.js");
+
+    workspace.installFsInterceptor();
+
+    assert.throws(
+      () => fs.writeFile(targetPath, "blocked", () => undefined),
+      HyperionIgnoredPathError,
+    );
+    assert.equal(existsSync(targetPath), false);
   });
 
   it("preserves callback error behavior from the original function", async () => {
@@ -581,6 +686,29 @@ describe("VFS interceptor fs/promises APIs", () => {
     await fsPromises.writeFile(path.join(outsideRoot, "outside.txt"), "outside");
 
     assert.equal(getWorkspaceCheckpoint(workspace, checkpointId)?.dirty.size, 0);
+    assert.deepEqual(
+      getIgnoredWriteEvents(workspace).map((event) => event.relativePath),
+      ["node_modules/pkg", "node_modules/pkg/index.js"],
+    );
+  });
+
+  it("blocks ignored promise writes in strict mode before writing", async () => {
+    const root = createTempWorkspace();
+    mkdirSync(path.join(root, "node_modules", "pkg"), { recursive: true });
+    const workspace = createWorkspace(root, { strictIgnoredWrites: true });
+    await workspace.snapshot();
+    const fsPromises = getCommonJsFsPromises();
+    const targetPath = path.join(root, "node_modules", "pkg", "index.js");
+
+    workspace.installFsInterceptor();
+
+    await assert.rejects(
+      async () => {
+        await fsPromises.writeFile(targetPath, "blocked");
+      },
+      HyperionIgnoredPathError,
+    );
+    assert.equal(existsSync(targetPath), false);
   });
 
   it("preserves promise rejection behavior from the original function", async () => {
@@ -697,6 +825,27 @@ describe("VFS interceptor write streams", () => {
     await writeStreamAndWait(fs.createWriteStream(path.join(outsideRoot, "outside.txt")), "outside");
 
     assert.equal(getWorkspaceCheckpoint(workspace, checkpointId)?.dirty.size, 0);
+    assert.deepEqual(
+      getIgnoredWriteEvents(workspace).map((event) => event.relativePath),
+      ["node_modules/pkg/index.js"],
+    );
+  });
+
+  it("blocks ignored createWriteStream targets in strict mode before writing", async () => {
+    const root = createTempWorkspace();
+    mkdirSync(path.join(root, "node_modules", "pkg"), { recursive: true });
+    const workspace = createWorkspace(root, { strictIgnoredWrites: true });
+    await workspace.snapshot();
+    const fs = getCommonJsFs();
+    const targetPath = path.join(root, "node_modules", "pkg", "index.js");
+
+    workspace.installFsInterceptor();
+
+    assert.throws(
+      () => fs.createWriteStream(targetPath),
+      HyperionIgnoredPathError,
+    );
+    assert.equal(existsSync(targetPath), false);
   });
 
   it("preserves createWriteStream error emission for missing parent directories", async () => {

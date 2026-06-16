@@ -1,6 +1,7 @@
 export type HyperionErrorCode =
   | "HYPERION_CAPACITY"
   | "HYPERION_INTEGRITY"
+  | "HYPERION_IGNORED_PATH"
   | "HYPERION_PATH"
   | "HYPERION_ROLLBACK"
   | "HYPERION_NOT_IMPLEMENTED";
@@ -30,9 +31,25 @@ export class HyperionIntegrityError extends HyperionError {
 }
 
 export class HyperionPathError extends HyperionError {
-  public constructor(message: string) {
-    super(message, "HYPERION_PATH");
+  public constructor(
+    message: string,
+    code: "HYPERION_PATH" | "HYPERION_IGNORED_PATH" = "HYPERION_PATH",
+  ) {
+    super(message, code);
     this.name = "HyperionPathError";
+  }
+}
+
+export class HyperionIgnoredPathError extends HyperionPathError {
+  public readonly relativePath: string;
+
+  public constructor(relativePath: string) {
+    super(
+      `Ignored path mutation blocked by strictIgnoredWrites: ${relativePath}`,
+      "HYPERION_IGNORED_PATH",
+    );
+    this.name = "HyperionIgnoredPathError";
+    this.relativePath = relativePath;
   }
 }
 

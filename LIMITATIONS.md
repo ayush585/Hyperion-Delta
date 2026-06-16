@@ -116,18 +116,21 @@ The dangerous case is silent corruption: a tool writes inside an ignored root, H
 
 ### Decided Mitigation: Strict Ignore Policy
 
-Hyperion should keep broad ignores for performance, but ignored writes must become explicit and auditable.
+Hyperion keeps broad ignores for performance, but ignored writes can now become explicit and auditable.
 
-The roadmap direction:
+Implemented foundation:
 
 - Keep ignored roots excluded from broad baseline scans and broad reconciliation walks.
-- Allow exact ignored paths to be tracked only through explicit `track()` calls, VFS capture, or tool-adapter manifests.
-- Add a strict mode such as `strictIgnoredWrites: true`.
-- In strict mode, if Hyperion observes or is told about a mutation under an ignored root without an explicit allow rule, it fails loudly instead of silently skipping the path.
+- `strictIgnoredWrites: true` throws `HyperionIgnoredPathError` before VFS-captured writes mutate ignored roots.
+- Non-strict VFS ignored writes are recorded internally for diagnostics while preserving current write behavior.
+- Exact ignored paths can be passed to `track()` for future tool-adapter integrations.
+
+Remaining roadmap direction:
+
 - Add tool mutation contracts for known tools so integrations can declare expected output roots without scanning all ignored content.
 - Make ignored-write diagnostics visible in `ReconcileResult` or session diagnostics.
 
-Example future configuration:
+Current strict configuration shape:
 
 ```ts
 const workspace = new HyperionWorkspace({

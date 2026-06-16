@@ -20,6 +20,7 @@ import {
   DEFAULT_IGNORED_PATTERNS,
   HyperionCapacityError,
   HyperionError,
+  HyperionIgnoredPathError,
   HyperionIntegrityError,
   HyperionPathError,
   HyperionRollbackError,
@@ -93,6 +94,34 @@ function getManualTrackedPaths(workspace: HyperionWorkspace): string[] {
         manualTrackedPaths: Set<string>;
       }
     ).manualTrackedPaths,
+  ];
+}
+
+function getManualTrackedIgnoredPaths(workspace: HyperionWorkspace): string[] {
+  return [
+    ...(
+      workspace as unknown as {
+        manualTrackedIgnoredPaths: Set<string>;
+      }
+    ).manualTrackedIgnoredPaths,
+  ];
+}
+
+function getIgnoredWriteEvents(workspace: HyperionWorkspace): Array<{
+  relativePath: string;
+  kind: string;
+  capturedAt: number;
+}> {
+  return [
+    ...(
+      workspace as unknown as {
+        ignoredWriteEvents: Array<{
+          relativePath: string;
+          kind: string;
+          capturedAt: number;
+        }>;
+      }
+    ).ignoredWriteEvents,
   ];
 }
 
@@ -314,6 +343,18 @@ describe("HyperionWorkspace", () => {
     assert.equal(customWorkspace.config.hotBufferMaxFiles, 2);
   });
 
+  it("resolves strict ignored-write defaults and custom config", () => {
+    const root = createTempWorkspace();
+    const defaultWorkspace = new HyperionWorkspace(root);
+    const strictWorkspace = new HyperionWorkspace({
+      workspaceRoot: root,
+      strictIgnoredWrites: true,
+    });
+
+    assert.equal(defaultWorkspace.config.strictIgnoredWrites, false);
+    assert.equal(strictWorkspace.config.strictIgnoredWrites, true);
+  });
+
   it("rejects a missing workspace root", () => {
     const root = join(tmpdir(), `hyperion-missing-${Date.now()}`);
 
@@ -401,7 +442,7 @@ describe("HyperionWorkspace", () => {
     assert.throws(() => new HyperionWorkspace({ workspaceRoot: root, sessionRoot: "../outside" }), HyperionPathError);
   });
 
-  it("stores tracked paths after normalization and filters ignored paths", () => {
+  it("stores tracked paths after normalization including exact ignored paths", () => {
     const root = createTempWorkspace();
     const workspace = new HyperionWorkspace(root);
 
@@ -413,10 +454,22 @@ describe("HyperionWorkspace", () => {
       "dist/output.js",
     ]);
 
-    assert.deepEqual(getManualTrackedPaths(workspace), ["src/index.ts"]);
+    assert.deepEqual(getManualTrackedPaths(workspace), [
+      "src/index.ts",
+      "node_modules/pkg/index.js",
+      ".git/config",
+      ".hyperion/checkpoints/session/manifest.json",
+      "dist/output.js",
+    ]);
+    assert.deepEqual(getManualTrackedIgnoredPaths(workspace), [
+      "node_modules/pkg/index.js",
+      ".git/config",
+      ".hyperion/checkpoints/session/manifest.json",
+      "dist/output.js",
+    ]);
   });
 
-  it("allows default ignored paths to be tracked when defaults are explicitly overridden", () => {
+  it("allows exact ignored paths to be tracked explicitly", () => {
     const root = createTempWorkspace();
     const workspace = new HyperionWorkspace({
       workspaceRoot: root,
@@ -426,7 +479,11 @@ describe("HyperionWorkspace", () => {
 
     workspace.track(["node_modules/pkg/index.js", "custom-output/file.txt"]);
 
-    assert.deepEqual(getManualTrackedPaths(workspace), ["node_modules/pkg/index.js"]);
+    assert.deepEqual(getManualTrackedPaths(workspace), [
+      "node_modules/pkg/index.js",
+      "custom-output/file.txt",
+    ]);
+    assert.deepEqual(getManualTrackedIgnoredPaths(workspace), ["custom-output/file.txt"]);
   });
 
   it("matches constrained ignore globs used by the SDK defaults", () => {

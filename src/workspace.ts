@@ -10,7 +10,12 @@ import {
   DEFAULT_IGNORED_PATTERNS,
   DEFAULT_MAX_CONCURRENT_CHECKPOINTS,
 } from "./constants.js";
-import { HyperionError, HyperionPathError, HyperionRollbackError } from "./errors.js";
+import {
+  HyperionError,
+  HyperionIgnoredPathError,
+  HyperionPathError,
+  HyperionRollbackError,
+} from "./errors.js";
 import { CheckpointStore, type StoredCheckpoint } from "./internal/checkpoint-store.js";
 import {
   discoverEnvironmentProfile,
@@ -46,6 +51,12 @@ import type {
   StorageStrategyKind,
 } from "./types.js";
 
+interface IgnoredWriteEvent {
+  relativePath: string;
+  kind: VfsMutationRecord["kind"];
+  capturedAt: number;
+}
+
 export class HyperionWorkspace {
   public readonly root: string;
   public readonly config: ResolvedHyperionConfig;
@@ -57,12 +68,14 @@ export class HyperionWorkspace {
   private readonly checkpointStore: CheckpointStore;
   private readonly checkpointStorage = new Map<CheckpointId, StorageStrategy>();
   private readonly storageSessionId = randomUUID();
+  private readonly ignoredWriteEvents: IgnoredWriteEvent[] = [];
   private readonly sessionManager: HyperionSessionManager;
   private readonly rollbackEngine = new RollbackEngine();
   private readonly reconciliationEngine = new ReconciliationEngine();
   private readonly vfsInterceptor: VfsInterceptor;
   private readonly lifecycleCleanupRegistry = new LifecycleCleanupRegistry();
   private readonly manualTrackedPaths = new Set<string>();
+  private readonly manualTrackedIgnoredPaths = new Set<string>();
   private sessionDeviceInfo?: SessionDeviceInfo;
   private emergencyCleanupCompleted = false;
   private disposed = false;
@@ -111,8 +124,9 @@ export class HyperionWorkspace {
       }
 
       const relativePath = normalizeWorkspacePath(this.root, path);
-      if (!this.ignoreMatcher.matches(relativePath)) {
-        this.manualTrackedPaths.add(relativePath);
+      this.manualTrackedPaths.add(relativePath);
+      if (this.ignoreMatcher.matches(relativePath)) {
+        this.manualTrackedIgnoredPaths.add(relativePath);
       }
     }
   }
@@ -261,6 +275,7 @@ export class HyperionWorkspace {
       hotBufferMaxTotalBytes:
         inputConfig.hotBufferMaxTotalBytes ?? DEFAULT_HOT_BUFFER_MAX_TOTAL_BYTES,
       hotBufferMaxFiles: inputConfig.hotBufferMaxFiles ?? DEFAULT_HOT_BUFFER_MAX_FILES,
+      strictIgnoredWrites: inputConfig.strictIgnoredWrites ?? false,
     };
   }
 
@@ -296,6 +311,21 @@ export class HyperionWorkspace {
   }
 
   private recordVfsMutations(records: VfsMutationRecord[]): void {
+    const normalizedRecords = records
+      .map((record) => ({
+        record,
+        relativePath: this.normalizeVfsPath(record.pathLike),
+      }))
+      .filter((entry): entry is { record: VfsMutationRecord; relativePath: string } =>
+        entry.relativePath !== undefined,
+      );
+
+    for (const { record, relativePath } of normalizedRecords) {
+      if (this.ignoreMatcher.matches(relativePath)) {
+        this.recordIgnoredWrite(relativePath, record);
+      }
+    }
+
     const checkpoint = this.checkpointStore.getMostRecentActiveCheckpoint();
 
     if (!checkpoint) {
@@ -308,10 +338,8 @@ export class HyperionWorkspace {
       return;
     }
 
-    for (const record of records) {
-      const relativePath = this.normalizeVfsPath(record.pathLike);
-
-      if (!relativePath || this.ignoreMatcher.matches(relativePath)) {
+    for (const { record, relativePath } of normalizedRecords) {
+      if (this.ignoreMatcher.matches(relativePath)) {
         continue;
       }
 
@@ -320,6 +348,20 @@ export class HyperionWorkspace {
         relativePath,
         this.createVfsDirtyEntry(checkpoint, relativePath, record),
       );
+    }
+  }
+
+  private recordIgnoredWrite(relativePath: string, record: VfsMutationRecord): void {
+    const event: IgnoredWriteEvent = {
+      relativePath,
+      kind: record.kind,
+      capturedAt: Date.now(),
+    };
+
+    this.ignoredWriteEvents.push(event);
+
+    if (this.config.strictIgnoredWrites) {
+      throw new HyperionIgnoredPathError(relativePath);
     }
   }
 

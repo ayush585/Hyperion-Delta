@@ -21,6 +21,7 @@ export type {
 export {
   HyperionCapacityError,
   HyperionError,
+  HyperionIgnoredPathError,
   HyperionIntegrityError,
   HyperionPathError,
   HyperionRollbackError,

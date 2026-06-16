@@ -44,6 +44,7 @@ function createConfig(overrides: Partial<ResolvedHyperionConfig> = {}): Resolved
     hotBufferMaxFileBytes: 256 * 1024,
     hotBufferMaxTotalBytes: 8 * 1024 * 1024,
     hotBufferMaxFiles: 1024,
+    strictIgnoredWrites: false,
     ...overrides,
   };
 }
