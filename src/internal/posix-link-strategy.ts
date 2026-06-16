@@ -42,6 +42,16 @@ export class PosixLinkStrategy extends PureManifestStrategy {
     return !this.linksUnsafe;
   }
 
+  public override getDiagnostics() {
+    return {
+      ...super.getDiagnostics(),
+      physicalStrategy: "posix-link" as const,
+      posixLink: {
+        linkModeActive: this.isLinkModeActive,
+      },
+    };
+  }
+
   protected override backupRegularFile(
     relativePath: string,
     sourcePath: string,

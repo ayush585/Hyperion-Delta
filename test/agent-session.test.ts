@@ -127,6 +127,7 @@ describe("HyperionAgentSession", () => {
     const reconcileResult = await session.reconcile(checkpointId);
     await session.rollback(checkpointId);
     const diagnostics = session.diagnostics;
+    const diagnosticsSnapshot = session.getDiagnostics();
 
     assert.equal(reconcileResult.created.includes("created.txt"), true);
     assert.equal(session.lastReconcileResult, reconcileResult);
@@ -134,6 +135,8 @@ describe("HyperionAgentSession", () => {
     assert.equal(typeof diagnostics.lastRollbackMs, "number");
     assert.equal(diagnostics.strategy, session.strategy);
     assert.equal(diagnostics.isDisposed, false);
+    assert.equal(diagnostics.activeCheckpointCount, 0);
+    assert.deepEqual(diagnosticsSnapshot, diagnostics);
   });
 
   it("delegates recoverAttempts() to the workspace", async () => {
@@ -397,6 +400,9 @@ describe("HyperionAgentSession", () => {
     };
     const diagnostics: HyperionAgentSessionDiagnostics = {
       strategy: "pure-manifest",
+      activeCheckpointCount: 0,
+      checkpoints: [],
+      ignoredWrites: [],
       lastReconcileResult: reconcileResult,
       lastRollbackMs: 1,
       isDisposed: false,

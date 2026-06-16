@@ -100,6 +100,10 @@ export class CheckpointStore {
     return this.checkpoints.get(checkpointId);
   }
 
+  public getCheckpoints(): StoredCheckpoint[] {
+    return [...this.checkpoints.values()];
+  }
+
   public getMostRecentActiveCheckpoint(): StoredCheckpoint | undefined {
     let mostRecentCheckpoint: StoredCheckpoint | undefined;
 

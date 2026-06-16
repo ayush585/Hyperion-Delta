@@ -4,6 +4,7 @@ import { HyperionWorkspace } from "./workspace.js";
 import type {
   CheckpointId,
   HyperionConfig,
+  HyperionDiagnostics,
   HyperionPromoteOptions,
   HyperionPromotionResult,
   HyperionToolOutputContract,
@@ -49,11 +50,9 @@ export interface HyperionAttemptResult<T> {
   rollbackMs?: number;
 }
 
-export interface HyperionAgentSessionDiagnostics {
-  strategy: StorageStrategyKind;
+export interface HyperionAgentSessionDiagnostics extends HyperionDiagnostics {
   lastReconcileResult?: ReconcileResult;
   lastRollbackMs?: number;
-  isDisposed: boolean;
 }
 
 export class HyperionExecError extends Error {
@@ -120,9 +119,12 @@ export class HyperionAgentSession {
   }
 
   public get diagnostics(): HyperionAgentSessionDiagnostics {
+    return this.getDiagnostics();
+  }
+
+  public getDiagnostics(): HyperionAgentSessionDiagnostics {
     const diagnostics: HyperionAgentSessionDiagnostics = {
-      strategy: this.strategy,
-      isDisposed: this.isDisposed,
+      ...this.workspace.getDiagnostics(),
     };
 
     if (this.lastReconcileResultValue) {

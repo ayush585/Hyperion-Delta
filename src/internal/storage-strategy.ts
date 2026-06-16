@@ -1,3 +1,5 @@
+import type { HyperionStorageDiagnostics } from "../types.js";
+
 export type StorageBackupKind = "file" | "directory" | "symlink" | "missing";
 
 export interface StorageBackupRecord {
@@ -22,6 +24,7 @@ export interface StorageStrategy {
   getBackupRecord(pathOrPathLike: string): StorageBackupRecord | undefined;
   getBackupRecords(): StorageBackupRecord[];
   readBackupFile(pathOrPathLike: string): Buffer | undefined;
+  getDiagnostics(): HyperionStorageDiagnostics;
   hydrateBackupRecords?(records: StorageBackupRecord[]): void;
   cleanup?(): void;
 }

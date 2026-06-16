@@ -17,11 +17,16 @@ import {
   type HyperionAgentSessionDiagnostics,
   type HyperionAttemptOptions,
   type HyperionAttemptResult,
+  type HyperionCheckpointDiagnostics,
   type HyperionConfig,
+  type HyperionDiagnostics,
   type HyperionExecOptions,
   type HyperionExecResult,
+  type HyperionHotBufferDiagnostics,
+  type HyperionIgnoredWriteEvent,
   type HyperionPromoteOptions,
   type HyperionPromotionResult,
+  type HyperionStorageDiagnostics,
   type HyperionToolOutputContract,
   type HyperionToolOutputPath,
   type RecoverableAttempt,
@@ -85,10 +90,40 @@ describe("package exports", () => {
       status: "active",
       createdAt: Date.now(),
     };
-    const diagnostics: HyperionAgentSessionDiagnostics = {
+    const hotBufferDiagnostics: HyperionHotBufferDiagnostics = {
+      enabled: true,
+      memoryHits: 1,
+      spills: 0,
+      bytesUsed: 4,
+      filesUsed: 1,
+    };
+    const storageDiagnostics: HyperionStorageDiagnostics = {
+      physicalStrategy: strategy,
+      backupRecordCount: 1,
+      hotBuffer: hotBufferDiagnostics,
+    };
+    const ignoredWriteEvent: HyperionIgnoredWriteEvent = {
+      relativePath: "node_modules/pkg/cache.json",
+      kind: "write",
+      capturedAt: 1,
+      action: "declared",
+    };
+    const checkpointDiagnostics: HyperionCheckpointDiagnostics = {
+      checkpointId,
+      status: "active",
+      storage: storageDiagnostics,
+    };
+    const workspaceDiagnostics: HyperionDiagnostics = {
       strategy,
-      lastReconcileResult: reconcileResult,
+      activeCheckpointCount: 1,
+      checkpoints: [checkpointDiagnostics],
+      ignoredWrites: [ignoredWriteEvent],
       isDisposed: false,
+    };
+    const diagnostics: HyperionAgentSessionDiagnostics = {
+      ...workspaceDiagnostics,
+      lastReconcileResult: reconcileResult,
+      lastRollbackMs: 1,
     };
     const attemptOptions: HyperionAttemptOptions = { rollbackOnThrow: true };
     const promoteOptions: HyperionPromoteOptions = { exportPatch: true };
@@ -140,6 +175,9 @@ describe("package exports", () => {
     assert.equal(strategy, "pure-manifest");
     assert.equal(reconcileResult.checkpointId, checkpointId);
     assert.equal(checkpoint.id, checkpointId);
+    assert.equal(workspaceDiagnostics.checkpoints[0]?.checkpointId, checkpointId);
+    assert.equal(storageDiagnostics.hotBuffer.memoryHits, 1);
+    assert.equal(ignoredWriteEvent.action, "declared");
     assert.equal(diagnostics.lastReconcileResult?.checkpointId, checkpointId);
     assert.equal(attemptOptions.rollbackOnThrow, true);
     assert.equal(promoteOptions.exportPatch, true);
@@ -155,6 +193,8 @@ describe("package exports", () => {
     assert.equal(typeof HyperionAgentSession.prototype.promote, "function");
     assert.equal(typeof HyperionWorkspace.prototype.declareToolOutputs, "function");
     assert.equal(typeof HyperionAgentSession.prototype.declareToolOutputs, "function");
+    assert.equal(typeof HyperionWorkspace.prototype.getDiagnostics, "function");
+    assert.equal(typeof HyperionAgentSession.prototype.getDiagnostics, "function");
     assert.equal(typeof HyperionWorkspace.prototype.rehydrateAttempt, "function");
     assert.equal(typeof HyperionAgentSession.prototype.rehydrateAttempt, "function");
   });

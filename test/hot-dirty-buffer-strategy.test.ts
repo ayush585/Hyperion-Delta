@@ -63,6 +63,7 @@ describe("HotDirtyBufferStrategy", () => {
     assert.equal(result.restored, true);
     assert.equal(readFileSync(filePath, "utf8"), "original");
     assert.deepEqual(strategy.getDiagnosticsForTests(), {
+      enabled: true,
       memoryHits: 1,
       spills: 0,
       bytesUsed: Buffer.byteLength("original"),
@@ -144,6 +145,7 @@ describe("HotDirtyBufferStrategy", () => {
     strategy.backupFile("same.txt");
 
     assert.deepEqual(strategy.getDiagnosticsForTests(), {
+      enabled: true,
       memoryHits: 1,
       spills: 0,
       bytesUsed: Buffer.byteLength("same"),

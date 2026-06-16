@@ -71,6 +71,7 @@ Core methods:
 
 - `track(path | paths)`: manually register paths for future integrations that cannot use interception.
 - `declareToolOutputs(contract)`: declare exact generated or ignored tool outputs so they can be tracked without broad ignored-root scans.
+- `getDiagnostics()`: return a read-only snapshot of strategy, storage, hot-buffer, checkpoint, and ignored-write diagnostics.
 - `snapshot()`: capture a checkpoint and return a `CheckpointId`.
 - `reconcile(checkpointId?)`: refresh dirty-set state after child-process or native-tool writes.
 - `rollback(checkpointId)`: reconcile, restore dirty paths, delete created paths, and clean ghost directories.
@@ -107,6 +108,18 @@ workspace.declareToolOutputs({
 ```
 
 Contracts are exact-path only. They do not enable recursive scans of dependency or build-output folders.
+
+Runtime diagnostics are available with `getDiagnostics()`:
+
+```ts
+const diagnostics = session.getDiagnostics();
+
+console.log(diagnostics.strategy);
+console.log(diagnostics.checkpoints[0]?.storage?.hotBuffer);
+console.log(diagnostics.ignoredWrites);
+```
+
+Diagnostics are snapshots. Mutating the returned object does not mutate SDK state, and calling diagnostics does not run Git, shell commands, or filesystem scans.
 
 Durable attempt journals are enabled by default with `durableAttemptJournals: true`. Each checkpoint writes metadata to `.hyperion/checkpoints/<checkpointId>/journal.json` before the ID is returned. The journal records checkpoint metadata, strategy, Git HEAD, ignored patterns, baseline metadata, and dirty-entry summaries, but never file contents. Git still owns permanent history, merging, commits, and pushes.
 
@@ -145,6 +158,7 @@ The published package is intentionally limited to `dist`, the README/architectur
 - Ignored paths: `node_modules/**`, `.git/**`, and `.hyperion/**` are ignored by default so dependency and internal state folders are not tracked.
 - Strict ignored writes: set `strictIgnoredWrites: true` to throw `HyperionIgnoredPathError` before in-process VFS writes mutate ignored roots.
 - Tool output contracts: call `declareToolOutputs()` before running package managers, build systems, formatters, or codegen tools that write exact ignored/generated files. Undeclared ignored writes still follow `strictIgnoredWrites`.
+- Diagnostics: call `getDiagnostics()` to inspect selected strategy, actual storage tier, Hot Dirty Buffer hit/spill counters, active checkpoint storage, and recent ignored-write events.
 - Durable journal recovery: call `recoverAttempts()` from a new workspace/session to inspect abandoned checkpoint metadata and `canRehydrate` status.
 - Rehydration failures: `rehydrateAttempt()` rejects disposed attempts, corrupt journals, missing backup manifests, missing backup files, cross-workspace journals, and volatile memory-only backups.
 - Patch export: `exportPatch()` supports text regular files and requires backup records for modified/deleted paths. Binary, symlink, and backup-missing exports fail loudly with integrity errors.

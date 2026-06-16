@@ -42,6 +42,16 @@ export class TmpfsDirtySetStrategy extends PureManifestStrategy {
       // Cleanup is best-effort and must never risk user workspace integrity.
     }
   }
+
+  public override getDiagnostics() {
+    return {
+      ...super.getDiagnostics(),
+      physicalStrategy: "tmpfs" as const,
+      tmpfs: {
+        active: true,
+      },
+    };
+  }
 }
 
 export { DEFAULT_TMPFS_ROOT };

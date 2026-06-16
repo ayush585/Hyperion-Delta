@@ -117,6 +117,47 @@ export interface HyperionPromotionResult {
   patch?: string;
 }
 
+export interface HyperionHotBufferDiagnostics {
+  enabled: boolean;
+  memoryHits: number;
+  spills: number;
+  bytesUsed: number;
+  filesUsed: number;
+}
+
+export interface HyperionStorageDiagnostics {
+  physicalStrategy: StorageStrategyKind;
+  backupRecordCount: number;
+  hotBuffer: HyperionHotBufferDiagnostics;
+  posixLink?: {
+    linkModeActive: boolean;
+  };
+  tmpfs?: {
+    active: boolean;
+  };
+}
+
+export interface HyperionIgnoredWriteEvent {
+  relativePath: string;
+  kind: string;
+  capturedAt: number;
+  action: "blocked" | "ignored" | "declared";
+}
+
+export interface HyperionCheckpointDiagnostics {
+  checkpointId: CheckpointId;
+  status: Checkpoint["status"];
+  storage?: HyperionStorageDiagnostics;
+}
+
+export interface HyperionDiagnostics {
+  strategy: StorageStrategyKind;
+  activeCheckpointCount: number;
+  checkpoints: HyperionCheckpointDiagnostics[];
+  ignoredWrites: HyperionIgnoredWriteEvent[];
+  isDisposed: boolean;
+}
+
 export type HyperionToolOutputPath = string | {
   path: string;
   optional?: boolean;

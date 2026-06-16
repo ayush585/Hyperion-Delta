@@ -28,6 +28,7 @@ export interface HotDirtyBufferOptions {
 }
 
 export interface HotDirtyBufferDiagnostics {
+  enabled: boolean;
   memoryHits: number;
   spills: number;
   bytesUsed: number;
@@ -169,8 +170,21 @@ export class HotDirtyBufferStrategy implements StorageStrategy {
     this.options.delegate.cleanup?.();
   }
 
-  public getDiagnosticsForTests(): HotDirtyBufferDiagnostics {
+  public getDiagnostics() {
     return {
+      ...this.options.delegate.getDiagnostics(),
+      backupRecordCount: this.getBackupRecords().length,
+      hotBuffer: this.getHotBufferDiagnostics(),
+    };
+  }
+
+  public getDiagnosticsForTests(): HotDirtyBufferDiagnostics {
+    return this.getHotBufferDiagnostics();
+  }
+
+  private getHotBufferDiagnostics(): HotDirtyBufferDiagnostics {
+    return {
+      enabled: true,
       memoryHits: this.memoryHits,
       spills: this.spills,
       bytesUsed: this.bytesUsed,

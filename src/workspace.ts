@@ -51,7 +51,10 @@ import { VfsInterceptor, type VfsMutationRecord } from "./internal/vfs-intercept
 import type {
   CheckpointId,
   DirtyEntry,
+  HyperionCheckpointDiagnostics,
   HyperionConfig,
+  HyperionDiagnostics,
+  HyperionIgnoredWriteEvent,
   HyperionPromoteOptions,
   HyperionPromotionResult,
   HyperionToolOutputContract,
@@ -68,6 +71,7 @@ interface IgnoredWriteEvent {
   relativePath: string;
   kind: VfsMutationRecord["kind"];
   capturedAt: number;
+  action: HyperionIgnoredWriteEvent["action"];
 }
 
 interface ToolOutputDeclaration {
@@ -76,6 +80,8 @@ interface ToolOutputDeclaration {
   optional: boolean;
   declaredAt: number;
 }
+
+const IGNORED_WRITE_EVENT_LIMIT = 100;
 
 export class HyperionWorkspace {
   public readonly root: string;
@@ -430,6 +436,18 @@ export class HyperionWorkspace {
     return this.strategySelection.kind;
   }
 
+  public getDiagnostics(): HyperionDiagnostics {
+    return {
+      strategy: this.strategySelection.kind,
+      activeCheckpointCount: this.activeCheckpointCount,
+      checkpoints: this.checkpointStore.getCheckpoints().map((checkpoint) =>
+        this.createCheckpointDiagnostics(checkpoint),
+      ),
+      ignoredWrites: this.ignoredWriteEvents.map((event) => ({ ...event })),
+      isDisposed: this.disposed,
+    };
+  }
+
   private resolveConfig(rootOrConfig: string | HyperionConfig): ResolvedHyperionConfig {
     const inputConfig =
       typeof rootOrConfig === "string" ? { workspaceRoot: rootOrConfig } : rootOrConfig;
@@ -506,6 +524,22 @@ export class HyperionWorkspace {
     if (checkpoint) {
       this.writeAttemptJournalBestEffort(checkpoint);
     }
+  }
+
+  private createCheckpointDiagnostics(
+    checkpoint: StoredCheckpoint,
+  ): HyperionCheckpointDiagnostics {
+    const diagnostics: HyperionCheckpointDiagnostics = {
+      checkpointId: checkpoint.id,
+      status: checkpoint.status,
+    };
+    const storage = this.checkpointStorage.get(checkpoint.id);
+
+    if (storage) {
+      diagnostics.storage = storage.getDiagnostics();
+    }
+
+    return diagnostics;
   }
 
   private createToolOutputDeclaration(
@@ -629,7 +663,11 @@ export class HyperionWorkspace {
         this.ignoreMatcher.matches(relativePath) &&
         !this.isDeclaredToolOutput(relativePath, checkpoint)
       ) {
-        this.recordIgnoredWrite(relativePath, record);
+        this.recordIgnoredWrite(
+          relativePath,
+          record,
+          this.config.strictIgnoredWrites ? "blocked" : "ignored",
+        );
       }
     }
 
@@ -652,6 +690,10 @@ export class HyperionWorkspace {
         continue;
       }
 
+      if (capturedBy === "tool-contract") {
+        this.recordIgnoredWrite(relativePath, record, "declared");
+      }
+
       const backupRecord = storage.backupFile(relativePath);
       checkpoint.dirty.set(
         relativePath,
@@ -663,16 +705,27 @@ export class HyperionWorkspace {
     this.writeAttemptJournalBestEffort(checkpoint);
   }
 
-  private recordIgnoredWrite(relativePath: string, record: VfsMutationRecord): void {
+  private recordIgnoredWrite(
+    relativePath: string,
+    record: VfsMutationRecord,
+    action: HyperionIgnoredWriteEvent["action"],
+  ): void {
     const event: IgnoredWriteEvent = {
       relativePath,
       kind: record.kind,
       capturedAt: Date.now(),
+      action,
     };
 
     this.ignoredWriteEvents.push(event);
+    if (this.ignoredWriteEvents.length > IGNORED_WRITE_EVENT_LIMIT) {
+      this.ignoredWriteEvents.splice(
+        0,
+        this.ignoredWriteEvents.length - IGNORED_WRITE_EVENT_LIMIT,
+      );
+    }
 
-    if (this.config.strictIgnoredWrites) {
+    if (action === "blocked") {
       throw new HyperionIgnoredPathError(relativePath);
     }
   }

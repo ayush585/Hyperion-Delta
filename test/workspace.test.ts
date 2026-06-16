@@ -325,6 +325,19 @@ function createCleanupTrackingStorage(
     readBackupFile() {
       return undefined;
     },
+    getDiagnostics() {
+      return {
+        physicalStrategy: "pure-manifest",
+        backupRecordCount: 0,
+        hotBuffer: {
+          enabled: false,
+          memoryHits: 0,
+          spills: 0,
+          bytesUsed: 0,
+          filesUsed: 0,
+        },
+      } as const;
+    },
     cleanup: onCleanup,
   };
 }
@@ -473,6 +486,7 @@ describe("HyperionWorkspace", () => {
     assert.equal(typeof workspace.reconcile, "function");
     assert.equal(typeof workspace.recoverAttempts, "function");
     assert.equal(typeof workspace.exportPatch, "function");
+    assert.equal(typeof workspace.getDiagnostics, "function");
     assert.equal(typeof workspace.dispose, "function");
     assert.equal(typeof workspace.installFsInterceptor, "function");
     assert.equal(typeof workspace.uninstallFsInterceptor, "function");
@@ -577,6 +591,95 @@ describe("HyperionWorkspace", () => {
       () => workspace.declareToolOutputs({ toolName: "npm", outputs: ["../outside.txt"] }),
       HyperionPathError,
     );
+  });
+
+  it("returns immutable diagnostics snapshots for strategy, checkpoints, and hot buffer usage", async () => {
+    const root = createTempWorkspace();
+    const fs = getCommonJsFs();
+    writeFileSync(join(root, "source.txt"), "before");
+    const workspace = new HyperionWorkspace(root);
+    workspace.installFsInterceptor();
+    const checkpointId = await workspace.snapshot();
+
+    fs.writeFileSync(join(root, "source.txt"), "after");
+
+    const diagnostics = workspace.getDiagnostics();
+    const checkpointDiagnostics = diagnostics.checkpoints.find(
+      (checkpoint) => checkpoint.checkpointId === checkpointId,
+    );
+
+    assert.equal(diagnostics.strategy, workspace.strategy);
+    assert.equal(diagnostics.activeCheckpointCount, 1);
+    assert.equal(diagnostics.isDisposed, false);
+    assert.equal(checkpointDiagnostics?.status, "active");
+    assert.equal(checkpointDiagnostics?.storage?.hotBuffer.enabled, true);
+    assert.equal(checkpointDiagnostics?.storage?.hotBuffer.memoryHits, 1);
+    assert.equal(checkpointDiagnostics?.storage?.backupRecordCount, 1);
+
+    diagnostics.checkpoints.length = 0;
+    diagnostics.ignoredWrites.push({
+      relativePath: "fake.txt",
+      kind: "write",
+      capturedAt: 1,
+      action: "ignored",
+    });
+
+    const freshDiagnostics = workspace.getDiagnostics();
+    assert.equal(freshDiagnostics.checkpoints.length, 1);
+    assert.equal(freshDiagnostics.ignoredWrites.some((event) => event.relativePath === "fake.txt"), false);
+  });
+
+  it("records bounded ignored-write diagnostics for ignored, blocked, and declared actions", async () => {
+    const root = createTempWorkspace();
+    const fs = getCommonJsFs();
+    mkdirSync(join(root, "node_modules"), { recursive: true });
+    const workspace = new HyperionWorkspace(root);
+    workspace.installFsInterceptor();
+
+    for (let index = 0; index < 105; index += 1) {
+      fs.writeFileSync(join(root, "node_modules", `ignored-${index}.txt`), "ignored");
+    }
+
+    const diagnostics = workspace.getDiagnostics();
+    assert.equal(diagnostics.ignoredWrites.length, 100);
+    assert.equal(diagnostics.ignoredWrites[0]?.relativePath, "node_modules/ignored-5.txt");
+    assert.equal(diagnostics.ignoredWrites[diagnostics.ignoredWrites.length - 1]?.action, "ignored");
+
+    const strictRoot = createTempWorkspace();
+    const strictFs = getCommonJsFs();
+    mkdirSync(join(strictRoot, "node_modules"), { recursive: true });
+    const strictWorkspace = new HyperionWorkspace({
+      workspaceRoot: strictRoot,
+      strictIgnoredWrites: true,
+    });
+    strictWorkspace.installFsInterceptor();
+
+    assert.throws(
+      () => strictFs.writeFileSync(join(strictRoot, "node_modules", "blocked.txt"), "blocked"),
+      HyperionIgnoredPathError,
+    );
+    const strictIgnoredWrites = strictWorkspace.getDiagnostics().ignoredWrites;
+    assert.equal(strictIgnoredWrites[strictIgnoredWrites.length - 1]?.action, "blocked");
+
+    const declaredRoot = createTempWorkspace();
+    const declaredFs = getCommonJsFs();
+    mkdirSync(join(declaredRoot, "node_modules"), { recursive: true });
+    const declaredWorkspace = new HyperionWorkspace({
+      workspaceRoot: declaredRoot,
+      strictIgnoredWrites: true,
+    });
+    declaredWorkspace.installFsInterceptor();
+    const checkpointId = await declaredWorkspace.snapshot();
+    declaredWorkspace.declareToolOutputs({
+      toolName: "npm",
+      checkpointId,
+      outputs: ["node_modules/declared.txt"],
+    });
+
+    declaredFs.writeFileSync(join(declaredRoot, "node_modules", "declared.txt"), "declared");
+
+    const declaredIgnoredWrites = declaredWorkspace.getDiagnostics().ignoredWrites;
+    assert.equal(declaredIgnoredWrites[declaredIgnoredWrites.length - 1]?.action, "declared");
   });
 
   it("matches constrained ignore globs used by the SDK defaults", () => {

@@ -14,12 +14,9 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 
 import { HyperionIntegrityError } from "../errors.js";
+import type { HyperionStorageDiagnostics } from "../types.js";
 import { normalizeWorkspacePath } from "./path.js";
-import type {
-  StorageBackupRecord,
-  StorageRestoreResult,
-  StorageStrategy,
-} from "./storage-strategy.js";
+import type { StorageBackupRecord, StorageRestoreResult, StorageStrategy } from "./storage-strategy.js";
 
 export class PureManifestStrategy implements StorageStrategy {
   protected readonly backupRecords = new Map<string, StorageBackupRecord>();
@@ -124,6 +121,20 @@ export class PureManifestStrategy implements StorageStrategy {
     for (const record of records) {
       this.backupRecords.set(record.relativePath, { ...record });
     }
+  }
+
+  public getDiagnostics(): HyperionStorageDiagnostics {
+    return {
+      physicalStrategy: "pure-manifest",
+      backupRecordCount: this.backupRecords.size,
+      hotBuffer: {
+        enabled: false,
+        memoryHits: 0,
+        spills: 0,
+        bytesUsed: 0,
+        filesUsed: 0,
+      },
+    };
   }
 
   public cleanup(): void {

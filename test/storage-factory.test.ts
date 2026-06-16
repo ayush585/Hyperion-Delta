@@ -57,6 +57,8 @@ describe("createCheckpointStorage", () => {
     );
 
     assert.equal(storage instanceof TmpfsDirtySetStrategy, true);
+    assert.equal(storage.getDiagnostics().physicalStrategy, "tmpfs");
+    assert.equal(storage.getDiagnostics().tmpfs?.active, true);
   });
 
   it("falls back to Pure Manifest when tmpfs namespace setup fails", () => {
@@ -70,6 +72,7 @@ describe("createCheckpointStorage", () => {
 
     assert.equal(storage instanceof PureManifestStrategy, true);
     assert.equal(storage instanceof TmpfsDirtySetStrategy, false);
+    assert.equal(storage.getDiagnostics().physicalStrategy, "pure-manifest");
   });
 
   it("routes Pure Manifest selections to Pure Manifest storage", () => {
@@ -79,6 +82,7 @@ describe("createCheckpointStorage", () => {
     );
 
     assert.equal(pureManifestStorage instanceof PureManifestStrategy, true);
+    assert.equal(pureManifestStorage.getDiagnostics().physicalStrategy, "pure-manifest");
   });
 
   it("routes posix-link selections to POSIX link storage", () => {
@@ -90,6 +94,8 @@ describe("createCheckpointStorage", () => {
     assert.equal(posixLinkStorage instanceof PosixLinkStrategy, true);
     assert.equal(posixLinkStorage instanceof PureManifestStrategy, true);
     assert.equal(posixLinkStorage instanceof TmpfsDirtySetStrategy, false);
+    assert.equal(posixLinkStorage.getDiagnostics().physicalStrategy, "posix-link");
+    assert.equal(typeof posixLinkStorage.getDiagnostics().posixLink?.linkModeActive, "boolean");
   });
 
   it("wraps selected storage in the Hot Dirty Buffer when enabled", () => {
@@ -100,5 +106,7 @@ describe("createCheckpointStorage", () => {
     });
 
     assert.equal(storage instanceof HotDirtyBufferStrategy, true);
+    assert.equal(storage.getDiagnostics().hotBuffer.enabled, true);
+    assert.equal(storage.getDiagnostics().physicalStrategy, "pure-manifest");
   });
 });

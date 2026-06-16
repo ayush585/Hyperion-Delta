@@ -80,7 +80,7 @@ Implemented foundation:
 
 Remaining roadmap direction:
 
-- Expose diagnostics showing whether a checkpoint used `tmpfs`, `hot-buffer`, `posix-link`, or `pure-manifest`.
+- `getDiagnostics()` exposes whether active checkpoints use `tmpfs`, `posix-link`, or `pure-manifest`, plus Hot Dirty Buffer hit/spill counters.
 - Explore Windows-native acceleration such as NTFS hard links, Windows Dev Drive, and ReFS block cloning.
 
 Future conceptual strategy shape:
@@ -136,12 +136,13 @@ Implemented foundation:
 - Exact ignored paths can be passed to `track()` for future tool-adapter integrations.
 - `declareToolOutputs()` lets integrations declare exact generated or ignored output paths for package managers, build systems, formatters, and codegen tools.
 - Declared outputs bypass strict ignored-write blocking, become VFS backup-aware, and are explicitly statted during reconciliation without scanning the ignored root.
+- `getDiagnostics()` exposes a bounded recent ignored-write event snapshot with `ignored`, `blocked`, and `declared` actions.
 
 Remaining roadmap direction:
 
 - Persist tool-output contracts in durable journals for abandoned-attempt recovery.
 - Add curated contract helpers for known tools while keeping the primitive exact-path based.
-- Make ignored-write diagnostics visible in `ReconcileResult` or session diagnostics.
+- Add aggregate ignored-write counters if enterprise users need telemetry without path-level event details.
 
 Current strict configuration shape:
 
