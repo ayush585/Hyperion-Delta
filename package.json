@@ -3,6 +3,24 @@
   "version": "0.1.0",
   "description": "Zero-config local agent state management for dirty-set-scale rollback.",
   "type": "module",
+  "keywords": [
+    "agent",
+    "rollback",
+    "checkpoint",
+    "filesystem",
+    "vfs",
+    "prettiflow",
+    "hyperion"
+  ],
+  "homepage": "https://github.com/ayush585/Hyperion-Delta#readme",
+  "bugs": {
+    "url": "https://github.com/ayush585/Hyperion-Delta/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ayush585/Hyperion-Delta.git"
+  },
+  "packageManager": "npm@10.9.2",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -16,8 +34,12 @@
     "assets/hyperion-benchmark-hero.png",
     "README.md",
     "ARCHITECTURE.md",
-    "LIMITATIONS.md"
+    "LIMITATIONS.md",
+    "CHANGELOG.md"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "benchmark": "node scripts/run-benchmark.mjs full",
     "benchmark:smoke": "node scripts/run-benchmark.mjs smoke",
@@ -25,6 +47,7 @@
     "build:test": "tsc -p tsconfig.test.json",
     "package:smoke": "node scripts/package-install-smoke.mjs",
     "release:check": "npm run typecheck && npm test && npm run build && npm pack --dry-run && npm run package:smoke",
+    "release:final": "npm run release:check && npm audit --omit=dev && npm pack --dry-run",
     "typecheck": "tsc -p tsconfig.test.json --noEmit",
     "test": "npm run build:test && node --test .test-dist/test",
     "test:watch": "node --test --watch .test-dist/test"

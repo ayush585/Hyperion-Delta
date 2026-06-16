@@ -132,7 +132,7 @@ Patch export is available with `exportPatch(checkpointId)`. It reconciles first,
 
 Git promotion is available with `promote(checkpointId)`. It reconciles first, optionally returns the same text patch with `{ exportPatch: true }`, marks the checkpoint `promoted`, and cleans Hyperion-owned rollback storage. Promoted checkpoints are audit records only: they cannot be rolled back, exported again, or rehydrated. Git remains the authority for staging, commits, merges, remotes, signatures, and pushes.
 
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full system design, failure model, and strategy router details. The limitations and mitigation roadmap live in [LIMITATIONS.md](./LIMITATIONS.md). Release and security posture notes live in [RELEASE.md](./RELEASE.md) and [SECURITY.md](./SECURITY.md).
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full system design, failure model, and strategy router details. The limitations and mitigation roadmap live in [LIMITATIONS.md](./LIMITATIONS.md). Release notes are in [CHANGELOG.md](./CHANGELOG.md), with release and security posture notes in [RELEASE.md](./RELEASE.md) and [SECURITY.md](./SECURITY.md).
 
 ## Release Checks
 
@@ -144,6 +144,14 @@ npm run release:check
 
 This runs typecheck, tests, build, `npm pack --dry-run`, and a temp-project install smoke. The install smoke packs the SDK into an OS temp directory, installs it into a temporary sample project, and imports both `HyperionWorkspace` and `HyperionAgentSession` from the installed package.
 
+For final pre-publish confidence:
+
+```sh
+npm run release:final
+```
+
+This runs the full release check, verifies the zero-runtime-dependency audit path with `npm audit --omit=dev`, and prints the final dry-run package contents.
+
 For a focused install smoke after an existing build:
 
 ```sh
@@ -151,6 +159,8 @@ npm run package:smoke
 ```
 
 The published package is intentionally limited to `dist`, the README/architecture docs, the benchmark hero image used by the README, and required npm metadata. Benchmark commands are repository-checkout utilities and are not part of the SDK runtime surface.
+
+Publishing is prepared through GitHub Actions trusted publishing with npm provenance. Before the first public publish, a maintainer must configure npm trusted publishing for `@prettiflow/hyperion-delta` with repository `ayush585/Hyperion-Delta`, workflow `.github/workflows/publish.yml`, and environment `npm-publish`. This repo does not store npm tokens.
 
 ## Troubleshooting
 

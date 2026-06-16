@@ -1,0 +1,43 @@
+name: Publish Package
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Git tag or ref to publish"
+        required: true
+        default: "main"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: Trusted npm publish
+    runs-on: ubuntu-latest
+    environment: npm-publish
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Verify release
+        run: npm run release:final
+
+      - name: Publish with provenance
+        run: npm publish --provenance --access public

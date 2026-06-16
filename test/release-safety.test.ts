@@ -15,11 +15,18 @@ describe("release safety", () => {
       "README.md",
       "ARCHITECTURE.md",
       "LIMITATIONS.md",
+      "CHANGELOG.md",
     ]);
     assert.equal(packageJson.dependencies, undefined);
     assert.equal(packageJson.type, "module");
     assert.equal(packageJson.exports["."].import, "./dist/index.js");
     assert.equal(packageJson.exports["."].types, "./dist/index.d.ts");
+    assert.equal(packageJson.publishConfig.access, "public");
+    assert.equal(packageJson.repository.url, "git+https://github.com/ayush585/Hyperion-Delta.git");
+    assert.equal(packageJson.bugs.url, "https://github.com/ayush585/Hyperion-Delta/issues");
+    assert.equal(packageJson.homepage, "https://github.com/ayush585/Hyperion-Delta#readme");
+    assert.equal(packageJson.packageManager, "npm@10.9.2");
+    assert.ok(packageJson.keywords.includes("rollback"));
   });
 
   it("defines release scripts that use repo-local commands only", () => {
@@ -34,6 +41,10 @@ describe("release safety", () => {
       scripts["release:check"],
       "npm run typecheck && npm test && npm run build && npm pack --dry-run && npm run package:smoke",
     );
+    assert.equal(
+      scripts["release:final"],
+      "npm run release:check && npm audit --omit=dev && npm pack --dry-run",
+    );
   });
 
   it("keeps CI on the non-publishing release check path", () => {
@@ -46,6 +57,32 @@ describe("release safety", () => {
     assert.match(workflow, /run: npm run release:check/);
     assert.doesNotMatch(workflow, /npm publish/);
     assert.doesNotMatch(workflow, /--provenance/);
+  });
+
+  it("keeps trusted publishing explicit and token-free", () => {
+    const workflow = readFileSync(path.join(repoRoot, ".github/workflows/publish.yml"), "utf8");
+
+    assert.match(workflow, /release:/);
+    assert.match(workflow, /workflow_dispatch:/);
+    assert.match(workflow, /id-token:\s*write/);
+    assert.match(workflow, /contents:\s*read/);
+    assert.match(workflow, /environment:\s*npm-publish/);
+    assert.match(workflow, /node-version: 20/);
+    assert.match(workflow, /run: npm ci/);
+    assert.match(workflow, /run: npm run release:final/);
+    assert.match(workflow, /run: npm publish --provenance --access public/);
+    assert.doesNotMatch(workflow, /NODE_AUTH_TOKEN/);
+    assert.doesNotMatch(workflow, /NPM_TOKEN/);
+  });
+
+  it("documents the initial release changelog", () => {
+    const changelog = readFileSync(path.join(repoRoot, "CHANGELOG.md"), "utf8");
+
+    assert.match(changelog, /## 0\.1\.0 - 2026-06-17/);
+    assert.match(changelog, /3,478\.407 ms/);
+    assert.match(changelog, /Hot Dirty Buffer/);
+    assert.match(changelog, /Windows NTFS hard-link/);
+    assert.match(changelog, /trusted-publishing workflow/);
   });
 
   it("keeps runtime child-process usage fixed or explicit-args only", () => {
