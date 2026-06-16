@@ -158,6 +158,21 @@ describe("HyperionAgentSession", () => {
     assert.match(patch, /\+created/);
   });
 
+  it("delegates promote() to the workspace", async () => {
+    const root = createTempWorkspace();
+    const session = createSession(root);
+    const checkpointId = await session.snapshot();
+    writeFileSync(path.join(root, "accepted.txt"), "accepted\n");
+
+    const result = await session.promote(checkpointId, { exportPatch: true });
+
+    assert.equal(result.checkpointId, checkpointId);
+    assert.equal(result.storageCleaned, true);
+    assert.match(result.patch ?? "", /accepted/);
+    assert.equal(readFileSync(path.join(root, "accepted.txt"), "utf8"), "accepted\n");
+    await assert.rejects(() => session.rollback(checkpointId), /promoted/);
+  });
+
   it("delegates rehydrateAttempt() to the workspace", async () => {
     const root = createTempWorkspace();
     const session = createSession(root);

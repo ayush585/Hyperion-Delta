@@ -4,6 +4,8 @@ import { HyperionWorkspace } from "./workspace.js";
 import type {
   CheckpointId,
   HyperionConfig,
+  HyperionPromoteOptions,
+  HyperionPromotionResult,
   RecoverableAttempt,
   ReconcileResult,
   StorageStrategyKind,
@@ -238,6 +240,13 @@ export class HyperionAgentSession {
 
   public exportPatch(checkpointId: CheckpointId): Promise<string> {
     return this.workspace.exportPatch(checkpointId);
+  }
+
+  public promote(
+    checkpointId: CheckpointId,
+    options?: HyperionPromoteOptions,
+  ): Promise<HyperionPromotionResult> {
+    return this.workspace.promote(checkpointId, options);
   }
 
   public rehydrateAttempt(checkpointId: CheckpointId): Promise<CheckpointId> {

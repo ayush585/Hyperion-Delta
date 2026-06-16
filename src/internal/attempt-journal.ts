@@ -307,6 +307,10 @@ export class AttemptJournalStore {
       return { canRehydrate: false, reason: "checkpoint is disposed" };
     }
 
+    if (journal.status === "promoted") {
+      return { canRehydrate: false, reason: "checkpoint is promoted" };
+    }
+
     const requiresBackups = journal.dirty.filter((entry) =>
       entry.kind === "modified" || entry.kind === "deleted" || entry.kind === "metadata",
     );
@@ -367,7 +371,8 @@ function isAttemptJournalEntry(value: unknown): value is AttemptJournalEntry {
     typeof candidate.updatedAt === "number" &&
     (candidate.status === "active" ||
       candidate.status === "rolling-back" ||
-      candidate.status === "disposed") &&
+      candidate.status === "disposed" ||
+      candidate.status === "promoted") &&
     (candidate.strategy === "tmpfs" ||
       candidate.strategy === "posix-link" ||
       candidate.strategy === "pure-manifest") &&

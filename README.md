@@ -46,10 +46,11 @@ import { HyperionAgentSession } from "@prettiflow/hyperion-delta";
 const session = new HyperionAgentSession(process.cwd());
 
 try {
-  await session.runAttempt(async ({ exec }) => {
+  const attempt = await session.runAttempt(async ({ exec }) => {
     await runAgentAttempt();
     await exec("npm", ["test"]);
   });
+  await session.promote(attempt.checkpointId);
 } finally {
   await session.dispose();
 }
@@ -57,7 +58,7 @@ try {
 
 `HyperionAgentSession` is a thin wrapper over `HyperionWorkspace`. It installs Node fs interception by default, exposes the selected strategy, stores the last reconcile result, and records rollback timing in milliseconds. `runAttempt()` creates a checkpoint, reconciles after explicit child-process execution, and rolls back automatically when the attempt throws. Child-process and native-tool writes are still protected by the mandatory reconcile call inside `rollback()`.
 
-Successful attempt checkpoint release is intentionally not a separate public API yet. For this phase, adapter users keep the workspace session alive across attempts and call `dispose()` during CLI shutdown; a dedicated commit/release method is deferred until the core checkpoint lifecycle grows that contract.
+Successful attempts are finalized with `promote(checkpointId)`. Promotion accepts the current worktree state in place, marks the checkpoint as promoted, frees Hyperion-owned rollback storage, and leaves `git add`, `git commit`, merge, and push to the developer or surrounding agent workflow.
 
 ## API Reference
 
@@ -75,6 +76,7 @@ Core methods:
 - `recoverAttempts()`: inspect durable checkpoint journals and whether they can be rehydrated.
 - `rehydrateAttempt(checkpointId)`: recreate safe in-memory checkpoint state from durable recovery metadata.
 - `exportPatch(checkpointId)`: emit a Git-compatible unified diff for an active checkpoint.
+- `promote(checkpointId, options?)`: finalize a successful attempt in place, optionally returning a patch, without running Git.
 - `dispose()`: unregister hooks/interceptors and clean Hyperion-owned session state.
 
 Agent-session helpers:
@@ -93,6 +95,8 @@ Durable attempt journals are enabled by default with `durableAttemptJournals: tr
 Recovery rehydration is available with `rehydrateAttempt(checkpointId)` when Hyperion can prove the checkpoint is still restorable. Created-file-only attempts can rehydrate from journal metadata. Modified or deleted files require durable backup records in `.hyperion/checkpoints/<checkpointId>/backups.json`; volatile Hot Dirty Buffer memory-only backups intentionally block rehydration after restart.
 
 Patch export is available with `exportPatch(checkpointId)`. It reconciles first, then emits a text-only unified diff for created, modified, and deleted regular files. It does not run Git, commit, merge, push, dispose the checkpoint, or mutate the workspace.
+
+Git promotion is available with `promote(checkpointId)`. It reconciles first, optionally returns the same text patch with `{ exportPatch: true }`, marks the checkpoint `promoted`, and cleans Hyperion-owned rollback storage. Promoted checkpoints are audit records only: they cannot be rolled back, exported again, or rehydrated. Git remains the authority for staging, commits, merges, remotes, signatures, and pushes.
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full system design, failure model, and strategy router details. The limitations and mitigation roadmap live in [LIMITATIONS.md](./LIMITATIONS.md). Release and security posture notes live in [RELEASE.md](./RELEASE.md) and [SECURITY.md](./SECURITY.md).
 
@@ -125,6 +129,7 @@ The published package is intentionally limited to `dist`, the README/architectur
 - Durable journal recovery: call `recoverAttempts()` from a new workspace/session to inspect abandoned checkpoint metadata and `canRehydrate` status.
 - Rehydration failures: `rehydrateAttempt()` rejects disposed attempts, corrupt journals, missing backup manifests, missing backup files, cross-workspace journals, and volatile memory-only backups.
 - Patch export: `exportPatch()` supports text regular files and requires backup records for modified/deleted paths. Binary, symlink, and backup-missing exports fail loudly with integrity errors.
+- Promotion: `promote()` finalizes the current worktree state and does not run Git. If `{ exportPatch: true }` fails because a dirty file is binary, a symlink, or missing backup content, the checkpoint remains active and rollback-capable.
 - Child-process modified/deleted files: `reconcile()` detects them, and `rollback()` always reconciles first. Restoring modified or deleted files still requires a pre-mutation backup from VFS interception or a future explicit tracking integration.
 - Missing backup record: rollback fails loudly with an integrity error instead of silently corrupting or partially restoring the workspace.
 

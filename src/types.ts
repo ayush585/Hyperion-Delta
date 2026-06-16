@@ -86,7 +86,7 @@ export interface Checkpoint {
   dirty: Map<string, DirtyEntry>;
   storageNamespace: string;
   deviceId?: number;
-  status: "active" | "rolling-back" | "disposed";
+  status: "active" | "rolling-back" | "disposed" | "promoted";
   createdAt: number;
 }
 
@@ -102,4 +102,17 @@ export interface RecoverableAttempt {
   canRehydrate: boolean;
   nonRehydratableReason?: string;
   gitHead?: string;
+}
+
+export interface HyperionPromoteOptions {
+  exportPatch?: boolean;
+}
+
+export interface HyperionPromotionResult {
+  checkpointId: CheckpointId;
+  promotedAt: number;
+  dirtyCount: number;
+  reconcileResult: ReconcileResult;
+  storageCleaned: boolean;
+  patch?: string;
 }

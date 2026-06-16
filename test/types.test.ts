@@ -20,6 +20,8 @@ import {
   type HyperionConfig,
   type HyperionExecOptions,
   type HyperionExecResult,
+  type HyperionPromoteOptions,
+  type HyperionPromotionResult,
   type RecoverableAttempt,
   type ReconcileResult,
   type StateManifest,
@@ -87,6 +89,7 @@ describe("package exports", () => {
       isDisposed: false,
     };
     const attemptOptions: HyperionAttemptOptions = { rollbackOnThrow: true };
+    const promoteOptions: HyperionPromoteOptions = { exportPatch: true };
     const execOptions: HyperionExecOptions = { captureOutput: true };
     const execResult: HyperionExecResult = {
       command: "node",
@@ -98,6 +101,14 @@ describe("package exports", () => {
       checkpointId,
       result: 1,
       rolledBack: false,
+    };
+    const promotionResult: HyperionPromotionResult = {
+      checkpointId,
+      promotedAt: 3,
+      dirtyCount: 1,
+      reconcileResult,
+      storageCleaned: true,
+      patch: "diff --git a/file b/file\n",
     };
     const recoverableAttempt: RecoverableAttempt = {
       checkpointId,
@@ -120,12 +131,16 @@ describe("package exports", () => {
     assert.equal(checkpoint.id, checkpointId);
     assert.equal(diagnostics.lastReconcileResult?.checkpointId, checkpointId);
     assert.equal(attemptOptions.rollbackOnThrow, true);
+    assert.equal(promoteOptions.exportPatch, true);
     assert.equal(execOptions.captureOutput, true);
     assert.equal(execResult.exitCode, 0);
     assert.equal(attemptResult.result, 1);
+    assert.equal(promotionResult.storageCleaned, true);
     assert.equal(recoverableAttempt.checkpointId, checkpointId);
     assert.equal(typeof HyperionWorkspace.prototype.exportPatch, "function");
     assert.equal(typeof HyperionAgentSession.prototype.exportPatch, "function");
+    assert.equal(typeof HyperionWorkspace.prototype.promote, "function");
+    assert.equal(typeof HyperionAgentSession.prototype.promote, "function");
     assert.equal(typeof HyperionWorkspace.prototype.rehydrateAttempt, "function");
     assert.equal(typeof HyperionAgentSession.prototype.rehydrateAttempt, "function");
   });

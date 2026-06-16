@@ -32,6 +32,8 @@ export type {
   DirtyEntry,
   GitIndexEntry,
   HyperionConfig,
+  HyperionPromoteOptions,
+  HyperionPromotionResult,
   RecoverableAttempt,
   ReconcileResult,
   ResolvedHyperionConfig,

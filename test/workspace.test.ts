@@ -1231,6 +1231,135 @@ describe("HyperionWorkspace", () => {
     await assert.rejects(() => workspace.exportPatch(symlinkId), HyperionIntegrityError);
   });
 
+  it("promotes dirty worktree state without reverting or invoking Git ownership", async () => {
+    const root = createTempWorkspace();
+    const fs = getCommonJsFs();
+    writeFileSync(join(root, "modify.txt"), "before\n");
+    writeFileSync(join(root, "delete.txt"), "delete me\n");
+    writeFileSync(join(root, "rename-source.txt"), "rename me\n");
+    writeFileSync(join(root, "copy-source.txt"), "copy me\n");
+    const workspace = new HyperionWorkspace(root);
+    workspace.installFsInterceptor();
+    const checkpointId = await workspace.snapshot();
+
+    fs.writeFileSync(join(root, "created.txt"), "created\n");
+    fs.writeFileSync(join(root, "modify.txt"), "after\n");
+    fs.unlinkSync(join(root, "delete.txt"));
+    fs.renameSync(join(root, "rename-source.txt"), join(root, "rename-target.txt"));
+    fs.copyFileSync(join(root, "copy-source.txt"), join(root, "copy-target.txt"));
+    runChildProcessScript(root, "require('node:fs').writeFileSync('child-created.txt', 'child\\n')");
+
+    const result = await workspace.promote(checkpointId);
+
+    assert.equal(result.checkpointId, checkpointId);
+    assert.equal(result.storageCleaned, true);
+    assert.equal(result.reconcileResult.created.includes("child-created.txt"), true);
+    assert.equal(readFileSync(join(root, "created.txt"), "utf8"), "created\n");
+    assert.equal(readFileSync(join(root, "modify.txt"), "utf8"), "after\n");
+    assert.equal(existsSync(join(root, "delete.txt")), false);
+    assert.equal(existsSync(join(root, "rename-source.txt")), false);
+    assert.equal(readFileSync(join(root, "rename-target.txt"), "utf8"), "rename me\n");
+    assert.equal(readFileSync(join(root, "copy-target.txt"), "utf8"), "copy me\n");
+    assert.equal(getWorkspaceCheckpoint(workspace, checkpointId)?.status, "promoted");
+    assert.equal(readWorkspaceJournal(root, checkpointId).status, "promoted");
+    assert.equal(getActiveCheckpointCount(workspace), 0);
+    await assert.rejects(() => workspace.rollback(checkpointId), HyperionRollbackError);
+    await assert.rejects(() => workspace.exportPatch(checkpointId), HyperionRollbackError);
+
+    const freshWorkspace = new HyperionWorkspace(root);
+    const recovered = (await freshWorkspace.recoverAttempts()).find(
+      (attempt) => attempt.checkpointId === checkpointId,
+    );
+
+    assert.equal(recovered?.status, "promoted");
+    assert.equal(recovered?.canRehydrate, false);
+    assert.match(recovered?.nonRehydratableReason ?? "", /promoted/);
+    await assert.rejects(() => freshWorkspace.rehydrateAttempt(checkpointId), HyperionRollbackError);
+  });
+
+  it("returns a patch before promotion cleanup when requested", async () => {
+    const root = createTempWorkspace();
+    writeFileSync(join(root, "source.txt"), "before\n");
+    const workspace = new HyperionWorkspace({
+      workspaceRoot: root,
+      useHotBuffer: false,
+    });
+    workspace.installFsInterceptor();
+    const checkpointId = await workspace.snapshot();
+
+    getCommonJsFs().writeFileSync(join(root, "source.txt"), "after\n");
+
+    const result = await workspace.promote(checkpointId, { exportPatch: true });
+
+    assert.match(result.patch ?? "", /diff --git a\/source\.txt b\/source\.txt/);
+    assert.match(result.patch ?? "", /-before/);
+    assert.match(result.patch ?? "", /\+after/);
+    assert.equal(readFileSync(join(root, "source.txt"), "utf8"), "after\n");
+    await assert.rejects(() => workspace.rollback(checkpointId), HyperionRollbackError);
+  });
+
+  it("leaves checkpoints rollback-capable when promotion patch export fails", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    workspace.installFsInterceptor();
+    const checkpointId = await workspace.snapshot();
+
+    getCommonJsFs().writeFileSync(join(root, "binary.bin"), Buffer.from([0, 1, 2]));
+
+    await assert.rejects(
+      () => workspace.promote(checkpointId, { exportPatch: true }),
+      HyperionIntegrityError,
+    );
+
+    assert.equal(getWorkspaceCheckpoint(workspace, checkpointId)?.status, "active");
+    assert.equal(existsSync(join(root, "binary.bin")), true);
+
+    await workspace.rollback(checkpointId);
+
+    assert.equal(existsSync(join(root, "binary.bin")), false);
+  });
+
+  it("cleans tmpfs checkpoint storage and frees capacity after promotion", async () => {
+    const root = createTempWorkspace();
+    const tmpfsRoot = mkdtempSync(join(tmpdir(), "hyperion-promote-tmpfs-"));
+    tempRoots.push(tmpfsRoot);
+    const workspace = new HyperionWorkspace({
+      workspaceRoot: root,
+      maxConcurrentCheckpoints: 1,
+    });
+    const checkpointId = await workspace.snapshot();
+    const storage = createTmpfsCheckpointStorage(root, tmpfsRoot, checkpointId);
+    replaceWorkspaceCheckpointStorage(workspace, checkpointId, storage);
+    writeFileSync(join(root, "created.txt"), "created\n");
+
+    const result = await workspace.promote(checkpointId);
+
+    assert.equal(result.storageCleaned, true);
+    assert.equal(existsSync(storage.backupNamespace), false);
+    assert.equal(getActiveCheckpointCount(workspace), 0);
+    await workspace.snapshot();
+  });
+
+  it("rejects promoted, unknown, disposed, and rolling-back promotion attempts", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const promotedId = await workspace.snapshot();
+
+    await workspace.promote(promotedId);
+    await assert.rejects(() => workspace.promote(promotedId), HyperionRollbackError);
+    await assert.rejects(() => workspace.promote("missing-checkpoint"), HyperionRollbackError);
+
+    const disposedId = await workspace.snapshot();
+    markWorkspaceCheckpointDisposed(workspace, disposedId);
+    await assert.rejects(() => workspace.promote(disposedId), HyperionRollbackError);
+
+    const rollingId = await workspace.snapshot();
+    const checkpoint = getWorkspaceCheckpoint(workspace, rollingId);
+    assert.ok(checkpoint);
+    checkpoint.status = "rolling-back";
+    await assert.rejects(() => workspace.promote(rollingId), HyperionRollbackError);
+  });
+
   it("deletes files created after snapshot during rollback", async () => {
     const root = createTempWorkspace();
     const workspace = new HyperionWorkspace(root);

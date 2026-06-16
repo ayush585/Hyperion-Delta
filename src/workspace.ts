@@ -52,6 +52,8 @@ import type {
   CheckpointId,
   DirtyEntry,
   HyperionConfig,
+  HyperionPromoteOptions,
+  HyperionPromotionResult,
   RecoverableAttempt,
   ReconcileResult,
   ResolvedHyperionConfig,
@@ -252,6 +254,52 @@ export class HyperionWorkspace {
     });
   }
 
+  public async promote(
+    checkpointId: CheckpointId,
+    options: HyperionPromoteOptions = {},
+  ): Promise<HyperionPromotionResult> {
+    this.assertNotDisposed("promote()");
+    const checkpoint = this.requireActiveCheckpoint(checkpointId);
+    const storage = this.requireCheckpointStorage(checkpointId);
+
+    if (checkpoint.lock.locked || checkpoint.status === "rolling-back") {
+      throw new HyperionRollbackError(`Checkpoint is already locked: ${checkpointId}`);
+    }
+
+    checkpoint.lock.locked = true;
+
+    try {
+      const reconcileResult = await this.reconcile(checkpointId);
+      const patch = options.exportPatch
+        ? this.patchExportEngine.exportPatch({
+            workspaceRoot: this.root,
+            checkpoint,
+            storage,
+          })
+        : undefined;
+      const promotedAt = Date.now();
+
+      checkpoint.status = "promoted";
+      this.writeAttemptJournalBestEffort(checkpoint);
+
+      const result: HyperionPromotionResult = {
+        checkpointId,
+        promotedAt,
+        dirtyCount: checkpoint.dirty.size,
+        reconcileResult,
+        storageCleaned: this.cleanupCheckpointStorageBestEffortWithResult(checkpointId),
+      };
+
+      if (patch !== undefined) {
+        result.patch = patch;
+      }
+
+      return result;
+    } finally {
+      checkpoint.lock.locked = false;
+    }
+  }
+
   public async rehydrateAttempt(checkpointId: CheckpointId): Promise<CheckpointId> {
     this.assertNotDisposed("rehydrateAttempt()");
 
@@ -271,6 +319,10 @@ export class HyperionWorkspace {
 
     if (journal.status === "disposed") {
       throw new HyperionRollbackError(`Recoverable checkpoint is disposed: ${checkpointId}`);
+    }
+
+    if (journal.status === "promoted") {
+      throw new HyperionRollbackError(`Recoverable checkpoint is promoted: ${checkpointId}`);
     }
 
     const backups = this.attemptJournalStore.readBackups(checkpointId);
@@ -546,6 +598,10 @@ export class HyperionWorkspace {
       throw new HyperionRollbackError(`Checkpoint is already disposed: ${checkpointId}`);
     }
 
+    if (checkpoint.status === "promoted") {
+      throw new HyperionRollbackError(`Checkpoint is already promoted: ${checkpointId}`);
+    }
+
     return checkpoint;
   }
 
@@ -583,6 +639,22 @@ export class HyperionWorkspace {
       // Capacity GC must continue freeing other disposed checkpoint namespaces.
     } finally {
       this.checkpointStorage.delete(checkpointId);
+    }
+  }
+
+  private cleanupCheckpointStorageBestEffortWithResult(checkpointId: CheckpointId): boolean {
+    const storage = this.checkpointStorage.get(checkpointId);
+
+    if (!storage) {
+      return true;
+    }
+
+    try {
+      storage.cleanup?.();
+      this.checkpointStorage.delete(checkpointId);
+      return true;
+    } catch {
+      return false;
     }
   }
 
@@ -710,7 +782,11 @@ export class HyperionWorkspace {
     for (const checkpointId of [...this.checkpointStorage.keys()]) {
       const checkpoint = this.checkpointStore.getCheckpoint(checkpointId);
 
-      if (!checkpoint || checkpoint.status === "disposed") {
+      if (
+        !checkpoint ||
+        checkpoint.status === "disposed" ||
+        checkpoint.status === "promoted"
+      ) {
         continue;
       }
 

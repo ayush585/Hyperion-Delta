@@ -122,6 +122,16 @@ export class CheckpointStore {
     checkpoint.status = "disposed";
   }
 
+  public markCheckpointPromoted(checkpointId: CheckpointId): void {
+    const checkpoint = this.checkpoints.get(checkpointId);
+
+    if (!checkpoint) {
+      throw new HyperionPathError(`Unknown checkpoint: ${checkpointId}`);
+    }
+
+    checkpoint.status = "promoted";
+  }
+
   public getDisposedCheckpoints(): StoredCheckpoint[] {
     const disposedCheckpoints: StoredCheckpoint[] = [];
 
