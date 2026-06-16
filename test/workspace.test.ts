@@ -7,6 +7,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -313,6 +314,9 @@ function createCleanupTrackingStorage(
     getBackupRecord() {
       return undefined;
     },
+    readBackupFile() {
+      return undefined;
+    },
     cleanup: onCleanup,
   };
 }
@@ -460,6 +464,7 @@ describe("HyperionWorkspace", () => {
     assert.equal(typeof workspace.rollback, "function");
     assert.equal(typeof workspace.reconcile, "function");
     assert.equal(typeof workspace.recoverAttempts, "function");
+    assert.equal(typeof workspace.exportPatch, "function");
     assert.equal(typeof workspace.dispose, "function");
     assert.equal(typeof workspace.installFsInterceptor, "function");
     assert.equal(typeof workspace.uninstallFsInterceptor, "function");
@@ -1026,6 +1031,96 @@ describe("HyperionWorkspace", () => {
     await workspace.reconcile(checkpointId);
 
     assert.equal(getWorkspaceCheckpoint(workspace, checkpointId)?.dirty.has("created-then-removed.txt"), false);
+  });
+
+  it("exports a patch for created files and reconciles child-process creates first", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    runChildProcessScript(
+      root,
+      `require('node:fs').writeFileSync(${JSON.stringify(join(root, "created.txt"))}, "created\\n");`,
+    );
+
+    const patch = await workspace.exportPatch(checkpointId);
+
+    assert.match(patch, /diff --git a\/created\.txt b\/created\.txt/);
+    assert.match(patch, /--- \/dev\/null/);
+    assert.match(patch, /\+\+\+ b\/created\.txt/);
+    assert.match(patch, /@@ -0,0 \+1 @@/);
+    assert.match(patch, /\+created/);
+    assert.equal(existsSync(join(root, "created.txt")), true);
+    assert.equal(getWorkspaceCheckpoint(workspace, checkpointId)?.status, "active");
+  });
+
+  it("exports patches for VFS-backed modified and deleted files", async () => {
+    const root = createTempWorkspace();
+    const fs = getCommonJsFs();
+    const workspace = new HyperionWorkspace(root);
+    workspace.installFsInterceptor();
+    writeFileSync(join(root, "modified.txt"), "before\n");
+    writeFileSync(join(root, "deleted.txt"), "remove\n");
+    const checkpointId = await workspace.snapshot();
+
+    fs.writeFileSync(join(root, "modified.txt"), "after\n");
+    fs.unlinkSync(join(root, "deleted.txt"));
+    const patch = await workspace.exportPatch(checkpointId);
+
+    assert.match(patch, /diff --git a\/deleted\.txt b\/deleted\.txt/);
+    assert.match(patch, /--- a\/deleted\.txt/);
+    assert.match(patch, /\+\+\+ \/dev\/null/);
+    assert.match(patch, /-remove/);
+    assert.match(patch, /diff --git a\/modified\.txt b\/modified\.txt/);
+    assert.match(patch, /-before/);
+    assert.match(patch, /\+after/);
+    assert.equal(readFileSync(join(root, "modified.txt"), "utf8"), "after\n");
+  });
+
+  it("exports multiple dirty files in deterministic path order and returns empty patches for clean checkpoints", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const cleanId = await workspace.snapshot();
+
+    assert.equal(await workspace.exportPatch(cleanId), "");
+
+    const dirtyId = await workspace.snapshot();
+    writeFileSync(join(root, "zeta.txt"), "z\n");
+    writeFileSync(join(root, "alpha.txt"), "a\n");
+    const patch = await workspace.exportPatch(dirtyId);
+
+    assert.ok(patch.indexOf("a/alpha.txt") < patch.indexOf("a/zeta.txt"));
+  });
+
+  it("throws when exporting modified child-process changes without backup content", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    writeFileSync(join(root, "source.txt"), "before\n");
+    const checkpointId = await workspace.snapshot();
+    runChildProcessScript(
+      root,
+      `require('node:fs').writeFileSync(${JSON.stringify(join(root, "source.txt"))}, "after\\n");`,
+    );
+
+    await assert.rejects(() => workspace.exportPatch(checkpointId), HyperionIntegrityError);
+  });
+
+  it("throws when exporting binary or symlink changes", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const binaryId = await workspace.snapshot();
+    writeFileSync(join(root, "binary.bin"), Buffer.from([0, 1, 2]));
+
+    await assert.rejects(() => workspace.exportPatch(binaryId), HyperionIntegrityError);
+
+    const symlinkId = await workspace.snapshot();
+    writeFileSync(join(root, "target.txt"), "target\n");
+    try {
+      symlinkSync("target.txt", join(root, "target-link.txt"));
+    } catch {
+      return;
+    }
+
+    await assert.rejects(() => workspace.exportPatch(symlinkId), HyperionIntegrityError);
   });
 
   it("deletes files created after snapshot during rollback", async () => {

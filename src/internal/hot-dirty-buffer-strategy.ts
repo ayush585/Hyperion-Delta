@@ -136,6 +136,17 @@ export class HotDirtyBufferStrategy implements StorageStrategy {
     return this.options.delegate.getBackupRecord(relativePath);
   }
 
+  public readBackupFile(pathOrPathLike: string): Buffer | undefined {
+    const relativePath = normalizeWorkspacePath(this.options.workspaceRoot, pathOrPathLike);
+    const memoryRecord = this.memoryRecords.get(relativePath);
+
+    if (memoryRecord) {
+      return Buffer.from(memoryRecord.contents);
+    }
+
+    return this.options.delegate.readBackupFile(relativePath);
+  }
+
   public cleanup(): void {
     this.memoryRecords.clear();
     this.bytesUsed = 0;

@@ -123,5 +123,7 @@ describe("package exports", () => {
     assert.equal(execResult.exitCode, 0);
     assert.equal(attemptResult.result, 1);
     assert.equal(recoverableAttempt.checkpointId, checkpointId);
+    assert.equal(typeof HyperionWorkspace.prototype.exportPatch, "function");
+    assert.equal(typeof HyperionAgentSession.prototype.exportPatch, "function");
   });
 });

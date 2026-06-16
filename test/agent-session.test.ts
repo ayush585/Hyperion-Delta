@@ -145,6 +145,19 @@ describe("HyperionAgentSession", () => {
     assert.equal(attempts.some((attempt) => attempt.checkpointId === checkpointId), true);
   });
 
+  it("delegates exportPatch() to the workspace", async () => {
+    const root = createTempWorkspace();
+    const fs = getCommonJsFs();
+    const session = createSession(root);
+    const checkpointId = await session.snapshot();
+    fs.writeFileSync(path.join(root, "created.txt"), "created\n");
+
+    const patch = await session.exportPatch(checkpointId);
+
+    assert.match(patch, /diff --git a\/created\.txt b\/created\.txt/);
+    assert.match(patch, /\+created/);
+  });
+
   it("runs a successful attempt with automatic snapshot and reconciliation", async () => {
     const root = createTempWorkspace();
     const fs = getCommonJsFs();

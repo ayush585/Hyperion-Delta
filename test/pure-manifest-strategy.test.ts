@@ -51,6 +51,7 @@ describe("PureManifestStrategy backup behavior", () => {
     assert.ok(record.backupPath);
     assert.equal(readFileSync(record.backupPath, "utf8"), "original");
     assert.equal(strategy.getBackupRecord("source.txt")?.relativePath, "source.txt");
+    assert.equal(strategy.readBackupFile("source.txt")?.toString("utf8"), "original");
   });
 
   it("records missing sources as tombstones without throwing", () => {
@@ -61,6 +62,7 @@ describe("PureManifestStrategy backup behavior", () => {
 
     assert.equal(record.kind, "missing");
     assert.equal(record.backupPath, undefined);
+    assert.equal(strategy.readBackupFile("missing.txt"), undefined);
   });
 
   it("records directories as metadata-only entries", () => {

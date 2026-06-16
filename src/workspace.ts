@@ -25,6 +25,7 @@ import {
 import { GhostDirectoryCleaner } from "./internal/ghost-directory-cleaner.js";
 import { createIgnoreMatcher, type IgnoreMatcher } from "./internal/ignore.js";
 import { LifecycleCleanupRegistry } from "./internal/lifecycle.js";
+import { PatchExportEngine } from "./internal/patch-export-engine.js";
 import { isPathInsideRoot, normalizeWorkspacePath } from "./internal/path.js";
 import { ReconciliationEngine } from "./internal/reconciliation-engine.js";
 import { RollbackEngine } from "./internal/rollback-engine.js";
@@ -73,6 +74,7 @@ export class HyperionWorkspace {
   private readonly attemptJournalStore: AttemptJournalStore;
   private readonly ignoredWriteEvents: IgnoredWriteEvent[] = [];
   private readonly sessionManager: HyperionSessionManager;
+  private readonly patchExportEngine = new PatchExportEngine();
   private readonly rollbackEngine = new RollbackEngine();
   private readonly reconciliationEngine = new ReconciliationEngine();
   private readonly vfsInterceptor: VfsInterceptor;
@@ -228,6 +230,20 @@ export class HyperionWorkspace {
 
   public async recoverAttempts(): Promise<RecoverableAttempt[]> {
     return this.config.durableAttemptJournals ? this.attemptJournalStore.recover() : [];
+  }
+
+  public async exportPatch(checkpointId: CheckpointId): Promise<string> {
+    this.assertNotDisposed("exportPatch()");
+    const checkpoint = this.requireActiveCheckpoint(checkpointId);
+    const storage = this.requireCheckpointStorage(checkpointId);
+
+    await this.reconcile(checkpointId);
+
+    return this.patchExportEngine.exportPatch({
+      workspaceRoot: this.root,
+      checkpoint,
+      storage,
+    });
   }
 
   public installFsInterceptor(): void {

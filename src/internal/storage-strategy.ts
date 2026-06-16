@@ -19,5 +19,6 @@ export interface StorageStrategy {
   restoreFile(pathOrPathLike: string): StorageRestoreResult;
   deleteCreatedPath(pathOrPathLike: string): void;
   getBackupRecord(pathOrPathLike: string): StorageBackupRecord | undefined;
+  readBackupFile(pathOrPathLike: string): Buffer | undefined;
   cleanup?(): void;
 }

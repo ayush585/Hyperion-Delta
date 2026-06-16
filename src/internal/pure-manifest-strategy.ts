@@ -4,6 +4,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  readFileSync,
   readlinkSync,
   renameSync,
   rmSync,
@@ -100,6 +101,17 @@ export class PureManifestStrategy implements StorageStrategy {
   public getBackupRecord(pathOrPathLike: string): StorageBackupRecord | undefined {
     const relativePath = normalizeWorkspacePath(this.workspaceRoot, pathOrPathLike);
     return this.backupRecords.get(relativePath);
+  }
+
+  public readBackupFile(pathOrPathLike: string): Buffer | undefined {
+    const relativePath = normalizeWorkspacePath(this.workspaceRoot, pathOrPathLike);
+    const record = this.backupRecords.get(relativePath);
+
+    if (!record || record.kind !== "file" || !record.backupPath || !existsSync(record.backupPath)) {
+      return undefined;
+    }
+
+    return readFileSync(record.backupPath);
   }
 
   public cleanup(): void {

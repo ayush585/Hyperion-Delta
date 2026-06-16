@@ -236,6 +236,10 @@ export class HyperionAgentSession {
     return this.workspace.recoverAttempts();
   }
 
+  public exportPatch(checkpointId: CheckpointId): Promise<string> {
+    return this.workspace.exportPatch(checkpointId);
+  }
+
   public dispose(): Promise<void> {
     return this.workspace.dispose();
   }
