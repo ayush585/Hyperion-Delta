@@ -15,6 +15,7 @@ export interface HyperionConfig {
   hotBufferMaxTotalBytes?: number;
   hotBufferMaxFiles?: number;
   strictIgnoredWrites?: boolean;
+  durableAttemptJournals?: boolean;
 }
 
 export interface ResolvedHyperionConfig {
@@ -30,6 +31,7 @@ export interface ResolvedHyperionConfig {
   hotBufferMaxTotalBytes: number;
   hotBufferMaxFiles: number;
   strictIgnoredWrites: boolean;
+  durableAttemptJournals: boolean;
 }
 
 export interface ReconcileResult {
@@ -86,4 +88,16 @@ export interface Checkpoint {
   deviceId?: number;
   status: "active" | "rolling-back" | "disposed";
   createdAt: number;
+}
+
+export interface RecoverableAttempt {
+  checkpointId: CheckpointId;
+  sessionId: string;
+  createdAt: number;
+  updatedAt: number;
+  status: Checkpoint["status"];
+  strategy: StorageStrategyKind;
+  dirtyCount: number;
+  journalPath: string;
+  gitHead?: string;
 }

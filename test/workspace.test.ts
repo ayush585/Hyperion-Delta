@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createRequire } from "node:module";
 import {
   existsSync,
   mkdirSync,
@@ -45,8 +46,13 @@ import { TmpfsDirtySetStrategy } from "../src/internal/tmpfs-dirty-set-strategy.
 import type { EnvironmentProfile } from "../src/internal/environment.js";
 import { HotDirtyBufferStrategy } from "../src/internal/hot-dirty-buffer-strategy.js";
 
+const require = createRequire(import.meta.url);
 const tempRoots: string[] = [];
 let lifecycleAdapter: FakeLifecycleProcessAdapter;
+
+function getCommonJsFs(): typeof import("node:fs") {
+  return require("node:fs") as typeof import("node:fs");
+}
 
 class FakeLifecycleProcessAdapter implements LifecycleProcessAdapter {
   public readonly pid = 12345;
@@ -222,6 +228,38 @@ function getWorkspaceSessionDirectory(workspace: HyperionWorkspace): string {
   ).sessionManager.sessionDir;
 }
 
+function getWorkspaceJournalPath(root: string, checkpointId: CheckpointId): string {
+  return join(root, ".hyperion", "checkpoints", checkpointId, "journal.json");
+}
+
+function readWorkspaceJournal(root: string, checkpointId: CheckpointId): {
+  checkpointId: string;
+  sessionId: string;
+  status: string;
+  strategy: string;
+  dirty: Array<{ relativePath: string; kind: string; capturedBy: string }>;
+  baseline: {
+    gitIndexEntries: Array<{ relativePath: string }>;
+    statEntries: Array<{ relativePath: string }>;
+  };
+  ignoredPatterns: string[];
+  gitHead?: string;
+} {
+  return JSON.parse(readFileSync(getWorkspaceJournalPath(root, checkpointId), "utf8")) as {
+    checkpointId: string;
+    sessionId: string;
+    status: string;
+    strategy: string;
+    dirty: Array<{ relativePath: string; kind: string; capturedBy: string }>;
+    baseline: {
+      gitIndexEntries: Array<{ relativePath: string }>;
+      statEntries: Array<{ relativePath: string }>;
+    };
+    ignoredPatterns: string[];
+    gitHead?: string;
+  };
+}
+
 function replaceWorkspaceSessionGarbageCollection(
   workspace: HyperionWorkspace,
   runStartupGarbageCollection: () => void,
@@ -355,6 +393,18 @@ describe("HyperionWorkspace", () => {
     assert.equal(strictWorkspace.config.strictIgnoredWrites, true);
   });
 
+  it("resolves durable attempt journal defaults and custom config", () => {
+    const root = createTempWorkspace();
+    const defaultWorkspace = new HyperionWorkspace(root);
+    const disabledWorkspace = new HyperionWorkspace({
+      workspaceRoot: root,
+      durableAttemptJournals: false,
+    });
+
+    assert.equal(defaultWorkspace.config.durableAttemptJournals, true);
+    assert.equal(disabledWorkspace.config.durableAttemptJournals, false);
+  });
+
   it("rejects a missing workspace root", () => {
     const root = join(tmpdir(), `hyperion-missing-${Date.now()}`);
 
@@ -409,6 +459,7 @@ describe("HyperionWorkspace", () => {
     assert.equal(typeof workspace.snapshot, "function");
     assert.equal(typeof workspace.rollback, "function");
     assert.equal(typeof workspace.reconcile, "function");
+    assert.equal(typeof workspace.recoverAttempts, "function");
     assert.equal(typeof workspace.dispose, "function");
     assert.equal(typeof workspace.installFsInterceptor, "function");
     assert.equal(typeof workspace.uninstallFsInterceptor, "function");
@@ -604,6 +655,61 @@ describe("HyperionWorkspace", () => {
     assert.equal(existsSync(workspace.config.sessionRoot), true);
   });
 
+  it("writes a durable attempt journal before snapshot returns", async () => {
+    const root = createTempWorkspace();
+    writeFileSync(join(root, "source.ts"), "export const value = 1;\n");
+    const workspace = new HyperionWorkspace(root);
+
+    const checkpointId = await workspace.snapshot();
+    const journal = readWorkspaceJournal(root, checkpointId);
+
+    assert.equal(existsSync(getWorkspaceJournalPath(root, checkpointId)), true);
+    assert.equal(journal.checkpointId, checkpointId);
+    assert.equal(typeof journal.sessionId, "string");
+    assert.equal(journal.status, "active");
+    assert.equal(journal.strategy, workspace.strategy);
+    assert.equal(journal.baseline.statEntries.some((entry) => entry.relativePath === "source.ts"), true);
+    assert.equal(journal.ignoredPatterns.includes("node_modules/**"), true);
+    assert.equal(JSON.stringify(journal).includes("export const value"), false);
+  });
+
+  it("can disable durable attempt journal creation", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace({
+      workspaceRoot: root,
+      durableAttemptJournals: false,
+    });
+
+    const checkpointId = await workspace.snapshot();
+
+    assert.equal(existsSync(getWorkspaceJournalPath(root, checkpointId)), false);
+    assert.deepEqual(await workspace.recoverAttempts(), []);
+  });
+
+  it("updates durable attempt journals after VFS mutation and reconcile", async () => {
+    const root = createTempWorkspace();
+    const fs = getCommonJsFs();
+    const workspace = new HyperionWorkspace(root);
+    workspace.installFsInterceptor();
+    const checkpointId = await workspace.snapshot();
+
+    fs.writeFileSync(join(root, "created-by-vfs.txt"), "created");
+    let journal = readWorkspaceJournal(root, checkpointId);
+
+    assert.equal(journal.dirty.length, 1);
+    assert.equal(journal.dirty[0]?.relativePath, "created-by-vfs.txt");
+    assert.equal(journal.dirty[0]?.capturedBy, "vfs");
+
+    fs.writeFileSync(join(root, "created-by-reconcile.txt"), "created");
+    await workspace.reconcile(checkpointId);
+    journal = readWorkspaceJournal(root, checkpointId);
+
+    assert.equal(
+      journal.dirty.some((entry) => entry.relativePath === "created-by-reconcile.txt"),
+      true,
+    );
+  });
+
   it("keeps snapshot namespace allocation from touching unrelated files", async () => {
     const root = createTempWorkspace();
     const filePath = join(root, "source.ts");
@@ -783,6 +889,39 @@ describe("HyperionWorkspace", () => {
     await assert.rejects(() => workspace.snapshot(), HyperionError);
   });
 
+  it("marks active attempt journals disposed during dispose", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+
+    await workspace.dispose();
+
+    assert.equal(readWorkspaceJournal(root, checkpointId).status, "disposed");
+  });
+
+  it("recovers durable attempt journal summaries from a fresh workspace", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    writeFileSync(join(root, "created.txt"), "created");
+    await workspace.reconcile(checkpointId);
+    const corruptDir = join(root, ".hyperion", "checkpoints", "corrupt");
+    mkdirSync(corruptDir, { recursive: true });
+    writeFileSync(join(corruptDir, "journal.json"), "{not-json");
+
+    const freshWorkspace = new HyperionWorkspace(root);
+    const attempts = await freshWorkspace.recoverAttempts();
+    const recovered = attempts.find((attempt) => attempt.checkpointId === checkpointId);
+
+    assert.ok(recovered);
+    assert.equal(recovered.sessionId, readWorkspaceJournal(root, checkpointId).sessionId);
+    assert.equal(recovered.status, "active");
+    assert.equal(recovered.strategy, workspace.strategy);
+    assert.equal(recovered.dirtyCount, 1);
+    assert.equal(recovered.journalPath, getWorkspaceJournalPath(root, checkpointId));
+    assert.equal(attempts.some((attempt) => attempt.checkpointId === "corrupt"), false);
+  });
+
   it("reconciles child-process created, modified, and deleted paths", async () => {
     const root = createTempWorkspace();
     const workspace = new HyperionWorkspace(root);
@@ -905,6 +1044,19 @@ describe("HyperionWorkspace", () => {
     assert.equal(getWorkspaceCheckpoint(workspace, checkpointId)?.status, "disposed");
   });
 
+  it("marks durable attempt journals disposed after successful rollback", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    writeFileSync(join(root, "created.txt"), "created");
+
+    await workspace.rollback(checkpointId);
+    const journal = readWorkspaceJournal(root, checkpointId);
+
+    assert.equal(journal.status, "disposed");
+    assert.equal(journal.dirty.some((entry) => entry.relativePath === "created.txt"), true);
+  });
+
   it("restores modified files when a backup record exists", async () => {
     const root = createTempWorkspace();
     const workspace = new HyperionWorkspace(root);
@@ -998,6 +1150,7 @@ describe("HyperionWorkspace", () => {
     const checkpoint = getWorkspaceCheckpoint(workspace, checkpointId);
     assert.equal(checkpoint?.status, "active");
     assert.equal(readFileSync(sourcePath, "utf8"), "mutated");
+    assert.equal(readWorkspaceJournal(root, checkpointId).status, "active");
   });
 
   it("calls reconcile before rollback and records dirty entries", async () => {

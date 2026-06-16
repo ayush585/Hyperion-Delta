@@ -4,6 +4,7 @@ import { HyperionWorkspace } from "./workspace.js";
 import type {
   CheckpointId,
   HyperionConfig,
+  RecoverableAttempt,
   ReconcileResult,
   StorageStrategyKind,
 } from "./types.js";
@@ -229,6 +230,10 @@ export class HyperionAgentSession {
     options: HyperionExecOptions = {},
   ): Promise<HyperionExecResult> {
     return this.execute(command, args, options);
+  }
+
+  public recoverAttempts(): Promise<RecoverableAttempt[]> {
+    return this.workspace.recoverAttempts();
   }
 
   public dispose(): Promise<void> {

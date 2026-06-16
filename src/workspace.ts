@@ -16,6 +16,7 @@ import {
   HyperionPathError,
   HyperionRollbackError,
 } from "./errors.js";
+import { AttemptJournalStore } from "./internal/attempt-journal.js";
 import { CheckpointStore, type StoredCheckpoint } from "./internal/checkpoint-store.js";
 import {
   discoverEnvironmentProfile,
@@ -45,6 +46,7 @@ import type {
   CheckpointId,
   DirtyEntry,
   HyperionConfig,
+  RecoverableAttempt,
   ReconcileResult,
   ResolvedHyperionConfig,
   StatLedgerEntry,
@@ -68,6 +70,7 @@ export class HyperionWorkspace {
   private readonly checkpointStore: CheckpointStore;
   private readonly checkpointStorage = new Map<CheckpointId, StorageStrategy>();
   private readonly storageSessionId = randomUUID();
+  private readonly attemptJournalStore: AttemptJournalStore;
   private readonly ignoredWriteEvents: IgnoredWriteEvent[] = [];
   private readonly sessionManager: HyperionSessionManager;
   private readonly rollbackEngine = new RollbackEngine();
@@ -100,6 +103,9 @@ export class HyperionWorkspace {
       gitAvailableHint: this.environmentProfile.gitAvailable,
     });
     this.checkpointStore = new CheckpointStore(config);
+    this.attemptJournalStore = new AttemptJournalStore({
+      sessionRoot: config.sessionRoot,
+    });
     this.vfsInterceptor = new VfsInterceptor({
       beforeMutation: (records) => {
         this.recordVfsMutations(records);
@@ -155,9 +161,10 @@ export class HyperionWorkspace {
         useHotBuffer: this.config.useHotBuffer,
         hotBufferMaxFileBytes: this.config.hotBufferMaxFileBytes,
         hotBufferMaxTotalBytes: this.config.hotBufferMaxTotalBytes,
-        hotBufferMaxFiles: this.config.hotBufferMaxFiles,
+      hotBufferMaxFiles: this.config.hotBufferMaxFiles,
       }),
     );
+    this.writeAttemptJournal(checkpoint);
 
     return checkpoint.id;
   }
@@ -172,14 +179,22 @@ export class HyperionWorkspace {
       ignoreMatcher: this.ignoreMatcher,
     });
 
-    await this.rollbackEngine.rollback({
-      checkpoint,
-      storage,
-      ghostDirectoryCleaner,
-      reconcile: async () => {
-        await this.reconcile(checkpointId);
-      },
-    });
+    try {
+      this.writeAttemptJournalBestEffort(checkpoint);
+      await this.rollbackEngine.rollback({
+        checkpoint,
+        storage,
+        ghostDirectoryCleaner,
+        reconcile: async () => {
+          await this.reconcile(checkpointId);
+        },
+      });
+      this.writeAttemptJournalBestEffort(checkpoint);
+    } catch (error) {
+      this.writeAttemptJournalBestEffort(checkpoint);
+      throw error;
+    }
+
     this.cleanupCheckpointStorage(checkpointId);
   }
 
@@ -198,14 +213,21 @@ export class HyperionWorkspace {
     }
 
     const currentManifest = this.stateEngine.captureManifest();
-    return this.reconciliationEngine.reconcile({ checkpoint, currentManifest });
+    const result = this.reconciliationEngine.reconcile({ checkpoint, currentManifest });
+    this.writeAttemptJournalBestEffort(checkpoint);
+    return result;
   }
 
   public async dispose(): Promise<void> {
+    this.markActiveAttemptJournalsDisposed();
     this.emergencyCleanupSync();
     this.checkpointStore.clear();
     this.lifecycleCleanupRegistry.unregister();
     this.disposed = true;
+  }
+
+  public async recoverAttempts(): Promise<RecoverableAttempt[]> {
+    return this.config.durableAttemptJournals ? this.attemptJournalStore.recover() : [];
   }
 
   public installFsInterceptor(): void {
@@ -276,6 +298,7 @@ export class HyperionWorkspace {
         inputConfig.hotBufferMaxTotalBytes ?? DEFAULT_HOT_BUFFER_MAX_TOTAL_BYTES,
       hotBufferMaxFiles: inputConfig.hotBufferMaxFiles ?? DEFAULT_HOT_BUFFER_MAX_FILES,
       strictIgnoredWrites: inputConfig.strictIgnoredWrites ?? false,
+      durableAttemptJournals: inputConfig.durableAttemptJournals ?? true,
     };
   }
 
@@ -303,6 +326,10 @@ export class HyperionWorkspace {
 
   private markCheckpointDisposed(checkpointId: CheckpointId): void {
     this.checkpointStore.markCheckpointDisposed(checkpointId);
+    const checkpoint = this.checkpointStore.getCheckpoint(checkpointId);
+    if (checkpoint) {
+      this.writeAttemptJournalBestEffort(checkpoint);
+    }
   }
 
   private backupCheckpointPath(checkpointId: CheckpointId, pathOrPathLike: string): void {
@@ -349,6 +376,8 @@ export class HyperionWorkspace {
         this.createVfsDirtyEntry(checkpoint, relativePath, record),
       );
     }
+
+    this.writeAttemptJournalBestEffort(checkpoint);
   }
 
   private recordIgnoredWrite(relativePath: string, record: VfsMutationRecord): void {
@@ -501,6 +530,8 @@ export class HyperionWorkspace {
 
     this.emergencyCleanupCompleted = true;
 
+    this.markActiveAttemptJournalsDisposed();
+
     try {
       this.vfsInterceptor.uninstall();
     } catch {
@@ -523,6 +554,45 @@ export class HyperionWorkspace {
       this.sessionManager.cleanupCurrentSession();
     } catch {
       // Current-session cleanup is best-effort.
+    }
+  }
+
+  private writeAttemptJournal(checkpoint: StoredCheckpoint): void {
+    if (!this.config.durableAttemptJournals) {
+      return;
+    }
+
+    this.attemptJournalStore.write({
+      checkpoint,
+      strategy: this.strategySelection.kind,
+      sessionId: this.storageSessionId,
+      workspaceRoot: this.root,
+    });
+  }
+
+  private writeAttemptJournalBestEffort(checkpoint: StoredCheckpoint): void {
+    if (!this.config.durableAttemptJournals) {
+      return;
+    }
+
+    this.attemptJournalStore.writeBestEffort({
+      checkpoint,
+      strategy: this.strategySelection.kind,
+      sessionId: this.storageSessionId,
+      workspaceRoot: this.root,
+    });
+  }
+
+  private markActiveAttemptJournalsDisposed(): void {
+    for (const checkpointId of [...this.checkpointStorage.keys()]) {
+      const checkpoint = this.checkpointStore.getCheckpoint(checkpointId);
+
+      if (!checkpoint || checkpoint.status === "disposed") {
+        continue;
+      }
+
+      checkpoint.status = "disposed";
+      this.writeAttemptJournalBestEffort(checkpoint);
     }
   }
 }

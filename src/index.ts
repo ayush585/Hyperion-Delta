@@ -32,6 +32,7 @@ export type {
   DirtyEntry,
   GitIndexEntry,
   HyperionConfig,
+  RecoverableAttempt,
   ReconcileResult,
   ResolvedHyperionConfig,
   StateManifest,

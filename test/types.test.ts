@@ -20,6 +20,7 @@ import {
   type HyperionConfig,
   type HyperionExecOptions,
   type HyperionExecResult,
+  type RecoverableAttempt,
   type ReconcileResult,
   type StateManifest,
   type StorageStrategyKind,
@@ -47,6 +48,7 @@ describe("package exports", () => {
       hotBufferMaxTotalBytes: DEFAULT_HOT_BUFFER_MAX_TOTAL_BYTES,
       hotBufferMaxFiles: DEFAULT_HOT_BUFFER_MAX_FILES,
       strictIgnoredWrites: true,
+      durableAttemptJournals: true,
     };
     const strategy: StorageStrategyKind = "pure-manifest";
     const reconcileResult: ReconcileResult = {
@@ -97,10 +99,21 @@ describe("package exports", () => {
       result: 1,
       rolledBack: false,
     };
+    const recoverableAttempt: RecoverableAttempt = {
+      checkpointId,
+      sessionId: "session",
+      createdAt: 1,
+      updatedAt: 2,
+      status: "active",
+      strategy,
+      dirtyCount: 0,
+      journalPath: "/tmp/journal.json",
+    };
 
     assert.equal(config.workspaceRoot, process.cwd());
     assert.equal(config.useHotBuffer, true);
     assert.equal(config.strictIgnoredWrites, true);
+    assert.equal(config.durableAttemptJournals, true);
     assert.equal(strategy, "pure-manifest");
     assert.equal(reconcileResult.checkpointId, checkpointId);
     assert.equal(checkpoint.id, checkpointId);
@@ -109,5 +122,6 @@ describe("package exports", () => {
     assert.equal(execOptions.captureOutput, true);
     assert.equal(execResult.exitCode, 0);
     assert.equal(attemptResult.result, 1);
+    assert.equal(recoverableAttempt.checkpointId, checkpointId);
   });
 });

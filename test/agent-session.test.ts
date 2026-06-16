@@ -136,6 +136,15 @@ describe("HyperionAgentSession", () => {
     assert.equal(diagnostics.isDisposed, false);
   });
 
+  it("delegates recoverAttempts() to the workspace", async () => {
+    const root = createTempWorkspace();
+    const session = createSession(root);
+    const checkpointId = await session.snapshot();
+    const attempts = await session.recoverAttempts();
+
+    assert.equal(attempts.some((attempt) => attempt.checkpointId === checkpointId), true);
+  });
+
   it("runs a successful attempt with automatic snapshot and reconciliation", async () => {
     const root = createTempWorkspace();
     const fs = getCommonJsFs();

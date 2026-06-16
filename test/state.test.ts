@@ -42,6 +42,7 @@ function createConfig(root: string): ResolvedHyperionConfig {
     hotBufferMaxTotalBytes: 8 * 1024 * 1024,
     hotBufferMaxFiles: 1024,
     strictIgnoredWrites: false,
+    durableAttemptJournals: true,
   };
 }
 

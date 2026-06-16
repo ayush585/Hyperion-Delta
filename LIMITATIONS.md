@@ -26,10 +26,16 @@ Git is slower because it solves those permanent-history problems. Hyperion is fa
 
 Hyperion should become the fast attempt layer under Git, not a mini Git.
 
-The roadmap direction:
+Implemented foundation:
+
+- Checkpoints now write durable attempt journals before `snapshot()` returns.
+- Journals persist checkpoint metadata, selected strategy, Git HEAD, ignored patterns, baseline metadata, and dirty-entry summaries.
+- `recoverAttempts()` can inspect abandoned journals from a fresh workspace/session.
+- Journals intentionally do not store file contents or replace Git history.
+
+Remaining roadmap direction:
 
 - Keep Git as the authority for commit history, merge conflict resolution, remotes, signatures, and push/pull workflows.
-- Add durable attempt journals that persist checkpoint metadata before agent mutation begins.
 - Persist crash-recoverable manifests for active checkpoints so process restart can inspect or clean abandoned attempts.
 - Add patch export, such as `workspace.exportPatch(checkpointId)` or `session.exportPatch(checkpointId)`, that emits a Git-compatible diff for successful attempts.
 - Add a promote flow that applies a successful dirty set back to the developer worktree, then lets Git handle commit, merge, and push.
