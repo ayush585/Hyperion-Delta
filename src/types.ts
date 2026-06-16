@@ -99,5 +99,7 @@ export interface RecoverableAttempt {
   strategy: StorageStrategyKind;
   dirtyCount: number;
   journalPath: string;
+  canRehydrate: boolean;
+  nonRehydratableReason?: string;
   gitHead?: string;
 }

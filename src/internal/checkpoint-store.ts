@@ -24,6 +24,17 @@ export interface CreateCheckpointInput {
   parentId?: CheckpointId;
 }
 
+export interface RestoreCheckpointInput {
+  id: CheckpointId;
+  baseline: StateManifest;
+  dirty: Map<string, DirtyEntry>;
+  storageNamespace: string;
+  status: "active" | "rolling-back";
+  createdAt: number;
+  deviceId?: number;
+  parentId?: CheckpointId;
+}
+
 export class CheckpointStore {
   private readonly checkpoints = new Map<CheckpointId, StoredCheckpoint>();
 
@@ -51,6 +62,29 @@ export class CheckpointStore {
     }
 
     this.checkpoints.set(id, checkpoint);
+    return checkpoint;
+  }
+
+  public restoreCheckpoint(input: RestoreCheckpointInput): StoredCheckpoint {
+    const checkpoint: StoredCheckpoint = {
+      id: input.id,
+      baseline: cloneStateManifest(input.baseline),
+      dirty: new Map(input.dirty),
+      storageNamespace: input.storageNamespace,
+      status: input.status,
+      createdAt: input.createdAt,
+      lock: { locked: false },
+    };
+
+    if (input.parentId) {
+      checkpoint.parentId = input.parentId;
+    }
+
+    if (input.deviceId !== undefined) {
+      checkpoint.deviceId = input.deviceId;
+    }
+
+    this.checkpoints.set(input.id, checkpoint);
     return checkpoint;
   }
 

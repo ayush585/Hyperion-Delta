@@ -240,6 +240,10 @@ export class HyperionAgentSession {
     return this.workspace.exportPatch(checkpointId);
   }
 
+  public rehydrateAttempt(checkpointId: CheckpointId): Promise<CheckpointId> {
+    return this.workspace.rehydrateAttempt(checkpointId);
+  }
+
   public dispose(): Promise<void> {
     return this.workspace.dispose();
   }

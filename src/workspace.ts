@@ -12,11 +12,16 @@ import {
 } from "./constants.js";
 import {
   HyperionError,
+  HyperionIntegrityError,
   HyperionIgnoredPathError,
   HyperionPathError,
   HyperionRollbackError,
 } from "./errors.js";
-import { AttemptJournalStore } from "./internal/attempt-journal.js";
+import {
+  AttemptJournalStore,
+  type AttemptJournalEntry,
+  type BackupManifestEntry,
+} from "./internal/attempt-journal.js";
 import { CheckpointStore, type StoredCheckpoint } from "./internal/checkpoint-store.js";
 import {
   discoverEnvironmentProfile,
@@ -50,6 +55,7 @@ import type {
   RecoverableAttempt,
   ReconcileResult,
   ResolvedHyperionConfig,
+  StateManifest,
   StatLedgerEntry,
   StorageStrategyKind,
 } from "./types.js";
@@ -246,6 +252,58 @@ export class HyperionWorkspace {
     });
   }
 
+  public async rehydrateAttempt(checkpointId: CheckpointId): Promise<CheckpointId> {
+    this.assertNotDisposed("rehydrateAttempt()");
+
+    if (this.checkpointStore.getCheckpoint(checkpointId)) {
+      return checkpointId;
+    }
+
+    const journal = this.attemptJournalStore.read(checkpointId);
+
+    if (!journal) {
+      throw new HyperionRollbackError(`Unknown recoverable checkpoint: ${checkpointId}`);
+    }
+
+    if (resolve(journal.workspaceRoot) !== this.root) {
+      throw new HyperionPathError(`Recoverable checkpoint belongs to another workspace: ${checkpointId}`);
+    }
+
+    if (journal.status === "disposed") {
+      throw new HyperionRollbackError(`Recoverable checkpoint is disposed: ${checkpointId}`);
+    }
+
+    const backups = this.attemptJournalStore.readBackups(checkpointId);
+    this.assertRehydratable(journal, backups);
+    this.runCapacityGarbageCollection();
+    this.checkpointStore.ensureCapacityAvailable();
+
+    const checkpoint = this.checkpointStore.restoreCheckpoint({
+      id: checkpointId,
+      baseline: stateManifestFromJournal(journal),
+      dirty: dirtyMapFromJournal(journal),
+      storageNamespace: join(this.config.sessionRoot, checkpointId),
+      status: journal.status === "rolling-back" ? "active" : journal.status,
+      createdAt: journal.createdAt,
+    });
+    const storage = createCheckpointStorage({
+      workspaceRoot: this.root,
+      selectedKind: journal.strategy,
+      checkpointNamespace: checkpoint.storageNamespace,
+      checkpointId: checkpoint.id,
+      sessionId: journal.sessionId,
+      useHotBuffer: false,
+      hotBufferMaxFileBytes: this.config.hotBufferMaxFileBytes,
+      hotBufferMaxTotalBytes: this.config.hotBufferMaxTotalBytes,
+      hotBufferMaxFiles: this.config.hotBufferMaxFiles,
+    });
+
+    storage.hydrateBackupRecords?.(backups?.records ?? []);
+    this.checkpointStorage.set(checkpointId, storage);
+
+    return checkpointId;
+  }
+
   public installFsInterceptor(): void {
     if (this.disposed) {
       throw new HyperionError("Cannot install fs interceptor after dispose()");
@@ -350,7 +408,9 @@ export class HyperionWorkspace {
 
   private backupCheckpointPath(checkpointId: CheckpointId, pathOrPathLike: string): void {
     this.requireKnownCheckpoint(checkpointId);
-    this.requireCheckpointStorage(checkpointId).backupFile(pathOrPathLike);
+    const storage = this.requireCheckpointStorage(checkpointId);
+    storage.backupFile(pathOrPathLike);
+    this.writeBackupManifestBestEffort(checkpointId, storage);
   }
 
   private recordVfsMutations(records: VfsMutationRecord[]): void {
@@ -393,6 +453,7 @@ export class HyperionWorkspace {
       );
     }
 
+    this.writeBackupManifestBestEffort(checkpoint.id, storage);
     this.writeAttemptJournalBestEffort(checkpoint);
   }
 
@@ -599,6 +660,52 @@ export class HyperionWorkspace {
     });
   }
 
+  private writeBackupManifestBestEffort(
+    checkpointId: CheckpointId,
+    storage: StorageStrategy,
+  ): void {
+    if (!this.config.durableAttemptJournals) {
+      return;
+    }
+
+    this.attemptJournalStore.writeBackupsBestEffort(checkpointId, storage.getBackupRecords());
+  }
+
+  private assertRehydratable(
+    journal: AttemptJournalEntry,
+    backups: BackupManifestEntry | undefined,
+  ): void {
+    const requiredEntries = journal.dirty.filter((entry) =>
+      entry.kind === "modified" || entry.kind === "deleted" || entry.kind === "metadata",
+    );
+
+    if (requiredEntries.length === 0) {
+      return;
+    }
+
+    if (!backups) {
+      throw new HyperionIntegrityError(`Missing backup manifest for ${journal.checkpointId}`);
+    }
+
+    const recordsByPath = new Map(backups.records.map((record) => [record.relativePath, record]));
+
+    for (const entry of requiredEntries) {
+      const record = recordsByPath.get(entry.relativePath);
+
+      if (!record) {
+        throw new HyperionIntegrityError(`Missing backup record for ${entry.relativePath}`);
+      }
+
+      if (record.volatile) {
+        throw new HyperionIntegrityError(`Backup record is volatile for ${entry.relativePath}`);
+      }
+
+      if (record.kind === "file" && (!record.backupPath || !existsSync(record.backupPath))) {
+        throw new HyperionIntegrityError(`Missing backup file for ${entry.relativePath}`);
+      }
+    }
+  }
+
   private markActiveAttemptJournalsDisposed(): void {
     for (const checkpointId of [...this.checkpointStorage.keys()]) {
       const checkpoint = this.checkpointStore.getCheckpoint(checkpointId);
@@ -611,6 +718,42 @@ export class HyperionWorkspace {
       this.writeAttemptJournalBestEffort(checkpoint);
     }
   }
+}
+
+function stateManifestFromJournal(journal: AttemptJournalEntry): StateManifest {
+  const manifest: StateManifest = {
+    gitAvailable: journal.baseline.gitAvailable,
+    gitIndexEntries: new Map(
+      journal.baseline.gitIndexEntries.map((entry) => [entry.relativePath, entry]),
+    ),
+    statEntries: new Map(
+      journal.baseline.statEntries.map((entry) => [entry.relativePath, entry]),
+    ),
+    ignoredPatterns: [...journal.ignoredPatterns],
+    capturedAt: journal.baseline.capturedAt,
+  };
+
+  if (journal.gitHead) {
+    manifest.gitHead = journal.gitHead;
+  }
+
+  return manifest;
+}
+
+function dirtyMapFromJournal(journal: AttemptJournalEntry): Map<string, DirtyEntry> {
+  return new Map(
+    journal.dirty.map((entry) => [
+      entry.relativePath,
+      {
+        relativePath: entry.relativePath,
+        kind: entry.kind,
+        fileType: entry.fileType,
+        capturedBy: entry.capturedBy,
+        firstSeenAt: entry.firstSeenAt,
+        lastSeenAt: entry.lastSeenAt,
+      },
+    ]),
+  );
 }
 
 function inferVfsDirtyKind(

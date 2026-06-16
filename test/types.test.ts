@@ -108,6 +108,7 @@ describe("package exports", () => {
       strategy,
       dirtyCount: 0,
       journalPath: "/tmp/journal.json",
+      canRehydrate: true,
     };
 
     assert.equal(config.workspaceRoot, process.cwd());
@@ -125,5 +126,7 @@ describe("package exports", () => {
     assert.equal(recoverableAttempt.checkpointId, checkpointId);
     assert.equal(typeof HyperionWorkspace.prototype.exportPatch, "function");
     assert.equal(typeof HyperionAgentSession.prototype.exportPatch, "function");
+    assert.equal(typeof HyperionWorkspace.prototype.rehydrateAttempt, "function");
+    assert.equal(typeof HyperionAgentSession.prototype.rehydrateAttempt, "function");
   });
 });

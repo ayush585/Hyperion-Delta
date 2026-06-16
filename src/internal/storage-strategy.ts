@@ -6,6 +6,7 @@ export interface StorageBackupRecord {
   backupPath?: string;
   mode?: number;
   linkTarget?: string;
+  volatile?: boolean;
 }
 
 export interface StorageRestoreResult {
@@ -19,6 +20,8 @@ export interface StorageStrategy {
   restoreFile(pathOrPathLike: string): StorageRestoreResult;
   deleteCreatedPath(pathOrPathLike: string): void;
   getBackupRecord(pathOrPathLike: string): StorageBackupRecord | undefined;
+  getBackupRecords(): StorageBackupRecord[];
   readBackupFile(pathOrPathLike: string): Buffer | undefined;
+  hydrateBackupRecords?(records: StorageBackupRecord[]): void;
   cleanup?(): void;
 }

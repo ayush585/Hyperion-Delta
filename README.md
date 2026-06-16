@@ -72,7 +72,8 @@ Core methods:
 - `snapshot()`: capture a checkpoint and return a `CheckpointId`.
 - `reconcile(checkpointId?)`: refresh dirty-set state after child-process or native-tool writes.
 - `rollback(checkpointId)`: reconcile, restore dirty paths, delete created paths, and clean ghost directories.
-- `recoverAttempts()`: inspect durable checkpoint journals left under `.hyperion/checkpoints`.
+- `recoverAttempts()`: inspect durable checkpoint journals and whether they can be rehydrated.
+- `rehydrateAttempt(checkpointId)`: recreate safe in-memory checkpoint state from durable recovery metadata.
 - `exportPatch(checkpointId)`: emit a Git-compatible unified diff for an active checkpoint.
 - `dispose()`: unregister hooks/interceptors and clean Hyperion-owned session state.
 
@@ -87,7 +88,9 @@ Small regular-file backups use a bounded in-memory Hot Dirty Buffer by default b
 
 Ignored dependency and generated-output roots are still excluded from broad scans, but VFS-captured writes into ignored paths can be made fail-fast with `strictIgnoredWrites: true`. Explicit `track()` calls may name exact ignored paths for future tool-adapter integrations without expanding broad reconciliation walks.
 
-Durable attempt journals are enabled by default with `durableAttemptJournals: true`. Each checkpoint writes metadata to `.hyperion/checkpoints/<checkpointId>/journal.json` before the ID is returned. The journal records checkpoint metadata, strategy, Git HEAD, ignored patterns, baseline metadata, and dirty-entry summaries, but never file contents. `recoverAttempts()` is inspect-only in this phase; Git still owns permanent history, merging, commits, and pushes.
+Durable attempt journals are enabled by default with `durableAttemptJournals: true`. Each checkpoint writes metadata to `.hyperion/checkpoints/<checkpointId>/journal.json` before the ID is returned. The journal records checkpoint metadata, strategy, Git HEAD, ignored patterns, baseline metadata, and dirty-entry summaries, but never file contents. Git still owns permanent history, merging, commits, and pushes.
+
+Recovery rehydration is available with `rehydrateAttempt(checkpointId)` when Hyperion can prove the checkpoint is still restorable. Created-file-only attempts can rehydrate from journal metadata. Modified or deleted files require durable backup records in `.hyperion/checkpoints/<checkpointId>/backups.json`; volatile Hot Dirty Buffer memory-only backups intentionally block rehydration after restart.
 
 Patch export is available with `exportPatch(checkpointId)`. It reconciles first, then emits a text-only unified diff for created, modified, and deleted regular files. It does not run Git, commit, merge, push, dispose the checkpoint, or mutate the workspace.
 
@@ -119,7 +122,8 @@ The published package is intentionally limited to `dist`, the README/architectur
 - Windows or NTFS: the SDK uses the pure manifest baseline for correctness rather than POSIX-only link assumptions. Small VFS-backed edits are accelerated by the Hot Dirty Buffer before spilling to disk.
 - Ignored paths: `node_modules/**`, `.git/**`, and `.hyperion/**` are ignored by default so dependency and internal state folders are not tracked.
 - Strict ignored writes: set `strictIgnoredWrites: true` to throw `HyperionIgnoredPathError` before in-process VFS writes mutate ignored roots.
-- Durable journal recovery: call `recoverAttempts()` from a new workspace/session to inspect abandoned checkpoint metadata. This does not rehydrate rollback-capable storage yet.
+- Durable journal recovery: call `recoverAttempts()` from a new workspace/session to inspect abandoned checkpoint metadata and `canRehydrate` status.
+- Rehydration failures: `rehydrateAttempt()` rejects disposed attempts, corrupt journals, missing backup manifests, missing backup files, cross-workspace journals, and volatile memory-only backups.
 - Patch export: `exportPatch()` supports text regular files and requires backup records for modified/deleted paths. Binary, symlink, and backup-missing exports fail loudly with integrity errors.
 - Child-process modified/deleted files: `reconcile()` detects them, and `rollback()` always reconciles first. Restoring modified or deleted files still requires a pre-mutation backup from VFS interception or a future explicit tracking integration.
 - Missing backup record: rollback fails loudly with an integrity error instead of silently corrupting or partially restoring the workspace.

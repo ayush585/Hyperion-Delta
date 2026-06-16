@@ -233,6 +233,10 @@ function getWorkspaceJournalPath(root: string, checkpointId: CheckpointId): stri
   return join(root, ".hyperion", "checkpoints", checkpointId, "journal.json");
 }
 
+function getWorkspaceBackupManifestPath(root: string, checkpointId: CheckpointId): string {
+  return join(root, ".hyperion", "checkpoints", checkpointId, "backups.json");
+}
+
 function readWorkspaceJournal(root: string, checkpointId: CheckpointId): {
   checkpointId: string;
   sessionId: string;
@@ -313,6 +317,9 @@ function createCleanupTrackingStorage(
     },
     getBackupRecord() {
       return undefined;
+    },
+    getBackupRecords() {
+      return [];
     },
     readBackupFile() {
       return undefined;
@@ -924,7 +931,108 @@ describe("HyperionWorkspace", () => {
     assert.equal(recovered.strategy, workspace.strategy);
     assert.equal(recovered.dirtyCount, 1);
     assert.equal(recovered.journalPath, getWorkspaceJournalPath(root, checkpointId));
+    assert.equal(recovered.canRehydrate, true);
     assert.equal(attempts.some((attempt) => attempt.checkpointId === "corrupt"), false);
+  });
+
+  it("rehydrates created-file-only attempts and rolls them back from a fresh workspace", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    writeFileSync(join(root, "created.txt"), "created");
+    await workspace.reconcile(checkpointId);
+
+    const freshWorkspace = new HyperionWorkspace(root);
+    await freshWorkspace.rehydrateAttempt(checkpointId);
+    await freshWorkspace.rollback(checkpointId);
+
+    assert.equal(existsSync(join(root, "created.txt")), false);
+  });
+
+  it("rehydrates durable modified attempts and supports patch export", async () => {
+    const root = createTempWorkspace();
+    const fs = getCommonJsFs();
+    const workspace = new HyperionWorkspace({
+      workspaceRoot: root,
+      useHotBuffer: false,
+      useTmpfs: false,
+    });
+    workspace.installFsInterceptor();
+    writeFileSync(join(root, "source.txt"), "before\n");
+    const checkpointId = await workspace.snapshot();
+    fs.writeFileSync(join(root, "source.txt"), "after\n");
+    workspace.uninstallFsInterceptor();
+
+    assert.equal(existsSync(getWorkspaceBackupManifestPath(root, checkpointId)), true);
+
+    const freshWorkspace = new HyperionWorkspace({
+      workspaceRoot: root,
+      useHotBuffer: false,
+      useTmpfs: false,
+    });
+    await freshWorkspace.rehydrateAttempt(checkpointId);
+    const patch = await freshWorkspace.exportPatch(checkpointId);
+
+    assert.match(patch, /-before/);
+    assert.match(patch, /\+after/);
+
+    await freshWorkspace.rollback(checkpointId);
+    assert.equal(readFileSync(join(root, "source.txt"), "utf8"), "before\n");
+  });
+
+  it("reports volatile Hot Dirty Buffer attempts as non-rehydratable", async () => {
+    const root = createTempWorkspace();
+    const fs = getCommonJsFs();
+    const workspace = new HyperionWorkspace(root);
+    workspace.installFsInterceptor();
+    writeFileSync(join(root, "source.txt"), "before\n");
+    const checkpointId = await workspace.snapshot();
+    fs.writeFileSync(join(root, "source.txt"), "after\n");
+    workspace.uninstallFsInterceptor();
+
+    const freshWorkspace = new HyperionWorkspace(root);
+    const attempt = (await freshWorkspace.recoverAttempts()).find(
+      (recoverableAttempt) => recoverableAttempt.checkpointId === checkpointId,
+    );
+
+    assert.equal(attempt?.canRehydrate, false);
+    assert.match(attempt?.nonRehydratableReason ?? "", /volatile/);
+    await assert.rejects(() => freshWorkspace.rehydrateAttempt(checkpointId), HyperionIntegrityError);
+  });
+
+  it("rejects rehydration for disposed attempts and missing durable backups", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace({
+      workspaceRoot: root,
+      useHotBuffer: false,
+      useTmpfs: false,
+    });
+    writeFileSync(join(root, "disposed.txt"), "before\n");
+    const disposedId = await workspace.snapshot();
+    markWorkspaceCheckpointDisposed(workspace, disposedId);
+
+    const fs = getCommonJsFs();
+    workspace.installFsInterceptor();
+    writeFileSync(join(root, "source.txt"), "before\n");
+    const missingBackupId = await workspace.snapshot();
+    fs.writeFileSync(join(root, "source.txt"), "after\n");
+    workspace.uninstallFsInterceptor();
+    const backupManifest = JSON.parse(
+      readFileSync(getWorkspaceBackupManifestPath(root, missingBackupId), "utf8"),
+    ) as { records: Array<{ backupPath?: string }> };
+    const backupPath = backupManifest.records[0]?.backupPath;
+    if (backupPath) {
+      rmSync(backupPath, { force: true });
+    }
+
+    const freshWorkspace = new HyperionWorkspace({
+      workspaceRoot: root,
+      useHotBuffer: false,
+      useTmpfs: false,
+    });
+
+    await assert.rejects(() => freshWorkspace.rehydrateAttempt(disposedId), HyperionRollbackError);
+    await assert.rejects(() => freshWorkspace.rehydrateAttempt(missingBackupId), HyperionIntegrityError);
   });
 
   it("reconciles child-process created, modified, and deleted paths", async () => {

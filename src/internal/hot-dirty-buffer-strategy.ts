@@ -136,6 +136,17 @@ export class HotDirtyBufferStrategy implements StorageStrategy {
     return this.options.delegate.getBackupRecord(relativePath);
   }
 
+  public getBackupRecords(): StorageBackupRecord[] {
+    const memoryRecords = [...this.memoryRecords.values()].map(toPublicRecord);
+    const delegateRecords = this.options.delegate.getBackupRecords();
+    const memoryPaths = new Set(memoryRecords.map((record) => record.relativePath));
+
+    return [
+      ...memoryRecords,
+      ...delegateRecords.filter((record) => !memoryPaths.has(record.relativePath)),
+    ];
+  }
+
   public readBackupFile(pathOrPathLike: string): Buffer | undefined {
     const relativePath = normalizeWorkspacePath(this.options.workspaceRoot, pathOrPathLike);
     const memoryRecord = this.memoryRecords.get(relativePath);
@@ -145,6 +156,11 @@ export class HotDirtyBufferStrategy implements StorageStrategy {
     }
 
     return this.options.delegate.readBackupFile(relativePath);
+  }
+
+  public hydrateBackupRecords(records: StorageBackupRecord[]): void {
+    const durableRecords = records.filter((record) => !record.volatile);
+    this.options.delegate.hydrateBackupRecords?.(durableRecords);
   }
 
   public cleanup(): void {
@@ -183,6 +199,7 @@ function toPublicRecord(record: MemoryBackupRecord): StorageBackupRecord {
   const publicRecord: StorageBackupRecord = {
     relativePath: record.relativePath,
     kind: record.kind,
+    volatile: true,
   };
 
   if (record.mode !== undefined) {

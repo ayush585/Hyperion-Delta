@@ -103,6 +103,10 @@ export class PureManifestStrategy implements StorageStrategy {
     return this.backupRecords.get(relativePath);
   }
 
+  public getBackupRecords(): StorageBackupRecord[] {
+    return [...this.backupRecords.values()].map((record) => ({ ...record }));
+  }
+
   public readBackupFile(pathOrPathLike: string): Buffer | undefined {
     const relativePath = normalizeWorkspacePath(this.workspaceRoot, pathOrPathLike);
     const record = this.backupRecords.get(relativePath);
@@ -112,6 +116,14 @@ export class PureManifestStrategy implements StorageStrategy {
     }
 
     return readFileSync(record.backupPath);
+  }
+
+  public hydrateBackupRecords(records: StorageBackupRecord[]): void {
+    this.backupRecords.clear();
+
+    for (const record of records) {
+      this.backupRecords.set(record.relativePath, { ...record });
+    }
   }
 
   public cleanup(): void {

@@ -33,11 +33,13 @@ Implemented foundation:
 - `recoverAttempts()` can inspect abandoned journals from a fresh workspace/session.
 - Journals intentionally do not store file contents or replace Git history.
 - `exportPatch(checkpointId)` emits Git-compatible text patches for active checkpoint dirty sets.
+- `rehydrateAttempt(checkpointId)` can recreate active checkpoint state when durable backup metadata proves rollback is safe.
+- `recoverAttempts()` reports `canRehydrate` and a reason when an abandoned attempt is metadata-only.
 
 Remaining roadmap direction:
 
 - Keep Git as the authority for commit history, merge conflict resolution, remotes, signatures, and push/pull workflows.
-- Persist crash-recoverable manifests for active checkpoints so process restart can inspect or clean abandoned attempts.
+- Add durable mirroring for Hot Dirty Buffer memory hits when teams choose recoverability over maximum hot-path speed.
 - Harden patch export for binary files, symlink diffs, and recovered checkpoint storage once persistent backup manifests exist.
 - Add a promote flow that applies a successful dirty set back to the developer worktree, then lets Git handle commit, merge, and push.
 - Preserve checkpoint DAG metadata for MCTS reasoning, but treat it as attempt metadata, not repository history.

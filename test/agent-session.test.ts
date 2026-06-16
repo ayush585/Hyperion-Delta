@@ -158,6 +158,22 @@ describe("HyperionAgentSession", () => {
     assert.match(patch, /\+created/);
   });
 
+  it("delegates rehydrateAttempt() to the workspace", async () => {
+    const root = createTempWorkspace();
+    const session = createSession(root);
+    const checkpointId = await session.snapshot();
+    writeFileSync(path.join(root, "created.txt"), "created");
+    await session.reconcile(checkpointId);
+    session.workspace.uninstallFsInterceptor();
+
+    const freshSession = createSession(root);
+    const rehydratedId = await freshSession.rehydrateAttempt(checkpointId);
+
+    assert.equal(rehydratedId, checkpointId);
+    await freshSession.rollback(checkpointId);
+    assert.equal(existsSync(path.join(root, "created.txt")), false);
+  });
+
   it("runs a successful attempt with automatic snapshot and reconciliation", async () => {
     const root = createTempWorkspace();
     const fs = getCommonJsFs();
