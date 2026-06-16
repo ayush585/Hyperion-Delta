@@ -1,4 +1,5 @@
 import { HotDirtyBufferStrategy } from "./hot-dirty-buffer-strategy.js";
+import { NtfsLinkStrategy } from "./ntfs-link-strategy.js";
 import { PosixLinkStrategy } from "./posix-link-strategy.js";
 import { PureManifestStrategy } from "./pure-manifest-strategy.js";
 import type { StorageStrategy } from "./storage-strategy.js";
@@ -55,6 +56,10 @@ function createBaseCheckpointStorage(
 
   if (options.selectedKind === "posix-link") {
     return new PosixLinkStrategy(options.workspaceRoot, options.checkpointNamespace);
+  }
+
+  if (options.selectedKind === "ntfs-link") {
+    return new NtfsLinkStrategy(options.workspaceRoot, options.checkpointNamespace);
   }
 
   return createPureManifestStorage(options);

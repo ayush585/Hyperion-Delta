@@ -101,7 +101,7 @@ async function writeStreamAndWait(
 
 function createStorageOptions(
   workspaceRoot: string,
-  selectedKind: "tmpfs" | "posix-link" | "pure-manifest",
+  selectedKind: "tmpfs" | "posix-link" | "ntfs-link" | "pure-manifest",
   tmpfsRoot?: string,
 ) {
   return {

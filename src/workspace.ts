@@ -25,6 +25,7 @@ import {
 import { CheckpointStore, type StoredCheckpoint } from "./internal/checkpoint-store.js";
 import {
   discoverEnvironmentProfile,
+  probeWindowsHardLinkCapability,
   type EnvironmentProfile,
 } from "./internal/environment.js";
 import { GhostDirectoryCleaner } from "./internal/ghost-directory-cleaner.js";
@@ -55,6 +56,7 @@ import type {
   HyperionConfig,
   HyperionDiagnostics,
   HyperionIgnoredWriteEvent,
+  HyperionWindowsVolumeDiagnostics,
   HyperionPromoteOptions,
   HyperionPromotionResult,
   HyperionToolOutputContract,
@@ -437,7 +439,7 @@ export class HyperionWorkspace {
   }
 
   public getDiagnostics(): HyperionDiagnostics {
-    return {
+    const diagnostics: HyperionDiagnostics = {
       strategy: this.strategySelection.kind,
       activeCheckpointCount: this.activeCheckpointCount,
       checkpoints: this.checkpointStore.getCheckpoints().map((checkpoint) =>
@@ -446,6 +448,13 @@ export class HyperionWorkspace {
       ignoredWrites: this.ignoredWriteEvents.map((event) => ({ ...event })),
       isDisposed: this.disposed,
     };
+
+    const windowsVolume = this.createWindowsVolumeDiagnostics();
+    if (windowsVolume) {
+      diagnostics.windowsVolume = windowsVolume;
+    }
+
+    return diagnostics;
   }
 
   private resolveConfig(rootOrConfig: string | HyperionConfig): ResolvedHyperionConfig {
@@ -507,11 +516,34 @@ export class HyperionWorkspace {
   }
 
   private refreshStrategySelection(deviceInfo: SessionDeviceInfo): void {
+    const windowsVolume = this.environmentProfile.windowsVolume;
+    const refreshedWindowsVolume =
+      this.environmentProfile.platform === "win32" && windowsVolume
+        ? {
+            ...windowsVolume,
+            hardLinkCapable:
+              deviceInfo.sameDevice &&
+              windowsVolume.fileSystemName?.toUpperCase() === "NTFS" &&
+              probeWindowsHardLinkCapability(this.config.sessionRoot),
+          }
+        : windowsVolume;
+
     this.environmentProfile = {
       ...this.environmentProfile,
       sameDeviceForLinks: deviceInfo.sameDevice,
+      windowsVolume: refreshedWindowsVolume,
     };
     this.strategySelection = selectStorageStrategy(this.config, this.environmentProfile);
+  }
+
+  private createWindowsVolumeDiagnostics(): HyperionWindowsVolumeDiagnostics | undefined {
+    const windowsVolume = this.environmentProfile.windowsVolume;
+
+    if (!windowsVolume) {
+      return undefined;
+    }
+
+    return { ...windowsVolume };
   }
 
   private getCheckpoint(checkpointId: CheckpointId) {

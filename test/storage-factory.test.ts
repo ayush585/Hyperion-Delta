@@ -9,6 +9,7 @@ import { PureManifestStrategy } from "../src/internal/pure-manifest-strategy.js"
 import { createCheckpointStorage } from "../src/internal/storage-factory.js";
 import { TmpfsDirtySetStrategy } from "../src/internal/tmpfs-dirty-set-strategy.js";
 import { HotDirtyBufferStrategy } from "../src/internal/hot-dirty-buffer-strategy.js";
+import { NtfsLinkStrategy } from "../src/internal/ntfs-link-strategy.js";
 import type { StorageStrategyKind } from "../src/index.js";
 
 const tempRoots: string[] = [];
@@ -96,6 +97,19 @@ describe("createCheckpointStorage", () => {
     assert.equal(posixLinkStorage instanceof TmpfsDirtySetStrategy, false);
     assert.equal(posixLinkStorage.getDiagnostics().physicalStrategy, "posix-link");
     assert.equal(typeof posixLinkStorage.getDiagnostics().posixLink?.linkModeActive, "boolean");
+  });
+
+  it("routes ntfs-link selections to NTFS link storage", () => {
+    const workspaceRoot = createTempRoot("hyperion-storage-factory-workspace-");
+    const ntfsLinkStorage = createCheckpointStorage(
+      createStorageOptions(workspaceRoot, "ntfs-link"),
+    );
+
+    assert.equal(ntfsLinkStorage instanceof NtfsLinkStrategy, true);
+    assert.equal(ntfsLinkStorage instanceof PureManifestStrategy, true);
+    assert.equal(ntfsLinkStorage instanceof TmpfsDirtySetStrategy, false);
+    assert.equal(ntfsLinkStorage.getDiagnostics().physicalStrategy, "ntfs-link");
+    assert.equal(typeof ntfsLinkStorage.getDiagnostics().ntfsLink?.linkModeActive, "boolean");
   });
 
   it("wraps selected storage in the Hot Dirty Buffer when enabled", () => {

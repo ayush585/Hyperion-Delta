@@ -29,6 +29,7 @@ import {
   type HyperionStorageDiagnostics,
   type HyperionToolOutputContract,
   type HyperionToolOutputPath,
+  type HyperionWindowsVolumeDiagnostics,
   type RecoverableAttempt,
   type ReconcileResult,
   type StateManifest,
@@ -101,6 +102,16 @@ describe("package exports", () => {
       physicalStrategy: strategy,
       backupRecordCount: 1,
       hotBuffer: hotBufferDiagnostics,
+      ntfsLink: {
+        linkModeActive: false,
+      },
+    };
+    const windowsVolumeDiagnostics: HyperionWindowsVolumeDiagnostics = {
+      fileSystemName: "NTFS",
+      isDevDrive: false,
+      devDriveTrusted: false,
+      hardLinkCapable: true,
+      blockCloneCandidate: false,
     };
     const ignoredWriteEvent: HyperionIgnoredWriteEvent = {
       relativePath: "node_modules/pkg/cache.json",
@@ -119,6 +130,7 @@ describe("package exports", () => {
       checkpoints: [checkpointDiagnostics],
       ignoredWrites: [ignoredWriteEvent],
       isDisposed: false,
+      windowsVolume: windowsVolumeDiagnostics,
     };
     const diagnostics: HyperionAgentSessionDiagnostics = {
       ...workspaceDiagnostics,
@@ -177,6 +189,8 @@ describe("package exports", () => {
     assert.equal(checkpoint.id, checkpointId);
     assert.equal(workspaceDiagnostics.checkpoints[0]?.checkpointId, checkpointId);
     assert.equal(storageDiagnostics.hotBuffer.memoryHits, 1);
+    assert.equal(storageDiagnostics.ntfsLink?.linkModeActive, false);
+    assert.equal(workspaceDiagnostics.windowsVolume?.hardLinkCapable, true);
     assert.equal(ignoredWriteEvent.action, "declared");
     assert.equal(diagnostics.lastReconcileResult?.checkpointId, checkpointId);
     assert.equal(attemptOptions.rollbackOnThrow, true);

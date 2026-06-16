@@ -42,6 +42,7 @@ import {
 } from "../src/internal/lifecycle.js";
 import { normalizeWorkspacePath } from "../src/internal/path.js";
 import { PosixLinkStrategy } from "../src/internal/posix-link-strategy.js";
+import { NtfsLinkStrategy } from "../src/internal/ntfs-link-strategy.js";
 import { probeSessionDeviceInfo, type SessionFsAdapter } from "../src/internal/session.js";
 import type { StorageStrategy } from "../src/internal/storage-strategy.js";
 import { TmpfsDirtySetStrategy } from "../src/internal/tmpfs-dirty-set-strategy.js";
@@ -372,7 +373,7 @@ describe("HyperionWorkspace", () => {
 
     assert.equal(workspace.root, resolve(root));
     assert.equal(workspace.config.workspaceRoot, resolve(root));
-    assert.ok(["tmpfs", "posix-link", "pure-manifest"].includes(workspace.strategy));
+    assert.ok(["tmpfs", "posix-link", "ntfs-link", "pure-manifest"].includes(workspace.strategy));
   });
 
   it("can instantiate with a config object", () => {
@@ -757,6 +758,38 @@ describe("HyperionWorkspace", () => {
     assert.equal(storage instanceof PosixLinkStrategy, true);
   });
 
+  it("refreshes Windows strategy selection to ntfs-link after hard-link probing", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace({
+      workspaceRoot: root,
+      useTmpfs: false,
+      useHotBuffer: false,
+    });
+    forceWorkspaceEnvironmentProfile(workspace, {
+      platform: "win32",
+      hasRsync: false,
+      hasDevShm: false,
+      devShmWritable: false,
+      sameDeviceForLinks: false,
+      windowsVolume: {
+        fileSystemName: "NTFS",
+        isDevDrive: false,
+        devDriveTrusted: false,
+        hardLinkCapable: false,
+        blockCloneCandidate: false,
+      },
+    });
+
+    const checkpointId = await workspace.snapshot();
+    const storage = getWorkspaceCheckpointStorage(workspace, checkpointId);
+    const diagnostics = workspace.getDiagnostics();
+
+    assert.equal(workspace.strategy, "ntfs-link");
+    assert.equal(storage instanceof NtfsLinkStrategy, true);
+    assert.equal(diagnostics.windowsVolume?.fileSystemName, "NTFS");
+    assert.equal(diagnostics.windowsVolume?.hardLinkCapable, true);
+  });
+
   it("wraps checkpoint storage in the Hot Dirty Buffer by default", async () => {
     const root = createTempWorkspace();
     const workspace = new HyperionWorkspace(root);
@@ -765,7 +798,7 @@ describe("HyperionWorkspace", () => {
     const storage = getWorkspaceCheckpointStorage(workspace, checkpointId);
 
     assert.equal(storage instanceof HotDirtyBufferStrategy, true);
-    assert.ok(["tmpfs", "posix-link", "pure-manifest"].includes(workspace.strategy));
+    assert.ok(["tmpfs", "posix-link", "ntfs-link", "pure-manifest"].includes(workspace.strategy));
   });
 
   it("can disable Hot Dirty Buffer checkpoint storage wrapping", async () => {

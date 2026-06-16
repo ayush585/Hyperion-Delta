@@ -41,6 +41,7 @@ export type {
   HyperionStorageDiagnostics,
   HyperionToolOutputContract,
   HyperionToolOutputPath,
+  HyperionWindowsVolumeDiagnostics,
   RecoverableAttempt,
   ReconcileResult,
   ResolvedHyperionConfig,

@@ -71,7 +71,7 @@ Core methods:
 
 - `track(path | paths)`: manually register paths for future integrations that cannot use interception.
 - `declareToolOutputs(contract)`: declare exact generated or ignored tool outputs so they can be tracked without broad ignored-root scans.
-- `getDiagnostics()`: return a read-only snapshot of strategy, storage, hot-buffer, checkpoint, and ignored-write diagnostics.
+- `getDiagnostics()`: return a read-only snapshot of strategy, storage, hot-buffer, Windows volume, checkpoint, and ignored-write diagnostics.
 - `snapshot()`: capture a checkpoint and return a `CheckpointId`.
 - `reconcile(checkpointId?)`: refresh dirty-set state after child-process or native-tool writes.
 - `rollback(checkpointId)`: reconcile, restore dirty paths, delete created paths, and clean ghost directories.
@@ -116,10 +116,13 @@ const diagnostics = session.getDiagnostics();
 
 console.log(diagnostics.strategy);
 console.log(diagnostics.checkpoints[0]?.storage?.hotBuffer);
+console.log(diagnostics.windowsVolume?.fileSystemName);
 console.log(diagnostics.ignoredWrites);
 ```
 
 Diagnostics are snapshots. Mutating the returned object does not mutate SDK state, and calling diagnostics does not run Git, shell commands, or filesystem scans.
+
+On Windows, Hyperion detects NTFS, Dev Drive, and ReFS signals with fixed `fsutil` probes. Verified NTFS workspaces can use the `ntfs-link` tier: Hyperion creates a hard-link backup, then immediately materializes the workspace file so later writes cannot mutate the backup inode. Dev Drive is reported as an environment optimization, not a rollback strategy. ReFS block clone is reported as a future native-helper candidate and is not invoked by the zero-dependency SDK.
 
 Durable attempt journals are enabled by default with `durableAttemptJournals: true`. Each checkpoint writes metadata to `.hyperion/checkpoints/<checkpointId>/journal.json` before the ID is returned. The journal records checkpoint metadata, strategy, Git HEAD, ignored patterns, baseline metadata, and dirty-entry summaries, but never file contents. Git still owns permanent history, merging, commits, and pushes.
 
@@ -154,11 +157,11 @@ The published package is intentionally limited to `dist`, the README/architectur
 - Git unavailable: Hyperion falls back to stat-only manifests. Correctness remains, but large non-Git workspaces may start slower.
 - tmpfs unavailable: Linux `/dev/shm` acceleration is skipped and the SDK degrades to POSIX links or pure manifest restore.
 - `rsync` unavailable: POSIX-link-style benchmark rows may be skipped, and SDK behavior remains on the safest available strategy.
-- Windows or NTFS: the SDK uses the pure manifest baseline for correctness rather than POSIX-only link assumptions. Small VFS-backed edits are accelerated by the Hot Dirty Buffer before spilling to disk.
+- Windows or NTFS: verified NTFS volumes can use `ntfs-link` dirty-set backup acceleration. Dev Drive and ReFS signals appear in diagnostics; ReFS block clone is intentionally deferred until a native Windows API helper exists. Small VFS-backed edits are still accelerated by the Hot Dirty Buffer before spilling to disk.
 - Ignored paths: `node_modules/**`, `.git/**`, and `.hyperion/**` are ignored by default so dependency and internal state folders are not tracked.
 - Strict ignored writes: set `strictIgnoredWrites: true` to throw `HyperionIgnoredPathError` before in-process VFS writes mutate ignored roots.
 - Tool output contracts: call `declareToolOutputs()` before running package managers, build systems, formatters, or codegen tools that write exact ignored/generated files. Undeclared ignored writes still follow `strictIgnoredWrites`.
-- Diagnostics: call `getDiagnostics()` to inspect selected strategy, actual storage tier, Hot Dirty Buffer hit/spill counters, active checkpoint storage, and recent ignored-write events.
+- Diagnostics: call `getDiagnostics()` to inspect selected strategy, actual storage tier, Hot Dirty Buffer hit/spill counters, Windows volume signals, active checkpoint storage, and recent ignored-write events.
 - Durable journal recovery: call `recoverAttempts()` from a new workspace/session to inspect abandoned checkpoint metadata and `canRehydrate` status.
 - Rehydration failures: `rehydrateAttempt()` rejects disposed attempts, corrupt journals, missing backup manifests, missing backup files, cross-workspace journals, and volatile memory-only backups.
 - Patch export: `exportPatch()` supports text regular files and requires backup records for modified/deleted paths. Binary, symlink, and backup-missing exports fail loudly with integrity errors.
@@ -236,7 +239,7 @@ The current final run is intentionally narrow: a 50,000-file fixture, one simula
 
 - Dirty-set size sweep: 1, 10, 100, and 1,000 changed files.
 - Repository size sweep: 10k, 50k, 100k, and 250k files.
-- Platform matrix: WSL2, native Linux, macOS APFS, and Windows NTFS.
+- Platform matrix: WSL2, native Linux, macOS APFS, Windows NTFS, Windows Dev Drive, and ReFS.
 - Tooling matrix: `tsc`, formatters, generated snapshots, package-manager outputs, `esbuild`, `oxc`, and SWC.
 - Strategy matrix: Git reset, manifest restore, POSIX link storage, and tmpfs dirty-set storage.
 - Cache matrix: cold-cache and warm-cache runs.

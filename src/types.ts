@@ -1,6 +1,6 @@
 export type CheckpointId = string;
 
-export type StorageStrategyKind = "tmpfs" | "posix-link" | "pure-manifest";
+export type StorageStrategyKind = "tmpfs" | "posix-link" | "ntfs-link" | "pure-manifest";
 
 export interface HyperionConfig {
   workspaceRoot: string;
@@ -132,9 +132,20 @@ export interface HyperionStorageDiagnostics {
   posixLink?: {
     linkModeActive: boolean;
   };
+  ntfsLink?: {
+    linkModeActive: boolean;
+  };
   tmpfs?: {
     active: boolean;
   };
+}
+
+export interface HyperionWindowsVolumeDiagnostics {
+  fileSystemName?: string | undefined;
+  isDevDrive: boolean;
+  devDriveTrusted: boolean;
+  hardLinkCapable: boolean;
+  blockCloneCandidate: boolean;
 }
 
 export interface HyperionIgnoredWriteEvent {
@@ -156,6 +167,7 @@ export interface HyperionDiagnostics {
   checkpoints: HyperionCheckpointDiagnostics[];
   ignoredWrites: HyperionIgnoredWriteEvent[];
   isDisposed: boolean;
+  windowsVolume?: HyperionWindowsVolumeDiagnostics;
 }
 
 export type HyperionToolOutputPath = string | {

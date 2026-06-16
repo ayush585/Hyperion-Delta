@@ -75,8 +75,10 @@ describe("release safety", () => {
     assert.match(stateSource, /execFileSync\("git"/);
 
     const environmentSource = readFileSync(path.join(repoRoot, "src/internal/environment.ts"), "utf8");
-    assert.match(environmentSource, /command: "git" \| "rsync"/);
+    assert.match(environmentSource, /command: "git" \| "rsync" \| "fsutil"/);
     assert.match(environmentSource, /adapter\.execFileSync\(command, \["--version"\]\)/);
+    assert.match(environmentSource, /adapter\.execFileSync\("fsutil", \["fsinfo", "volumeinfo", volumePath\]\)/);
+    assert.match(environmentSource, /adapter\.execFileSync\("fsutil", \["devdrv", "query", volumePath\]\)/);
   });
 });
 

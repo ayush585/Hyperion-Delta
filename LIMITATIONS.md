@@ -63,11 +63,11 @@ Manifest targeted restore average:      0.971 ms
 tmpfs dirty-set restore average:         0.063 ms
 ```
 
-Linux and WSL2 can use tmpfs for RAM-backed dirty-set storage. macOS and Linux can use POSIX link strategies when device boundaries are safe. Native Windows/NTFS falls back to pure manifest copy/restore.
+Linux and WSL2 can use tmpfs for RAM-backed dirty-set storage. macOS and Linux can use POSIX link strategies when device boundaries are safe. Windows can now use NTFS hard-link dirty-set backups when Hyperion verifies the workspace and checkpoint storage are on the same device and hard links are available.
 
 The semantics stay consistent, but latency is not identical across operating systems.
 
-### Decided Mitigation: Hot Dirty Buffer
+### Decided Mitigation: Hot Dirty Buffer Plus Windows-Native Link Discovery
 
 Hyperion now has the foundation for a cross-platform Hot Dirty Buffer: a bounded in-memory backup tier for small dirty files.
 
@@ -77,11 +77,14 @@ Implemented foundation:
 - Memory use is bounded by per-file, total-byte, and file-count limits.
 - Files spill to the selected storage strategy when they exceed those bounds.
 - Restore uses same-directory temp files followed by atomic rename, matching existing rollback semantics.
+- Windows volume discovery records NTFS, Dev Drive, and ReFS signals using fixed `fsutil` probes.
+- NTFS hard-link storage accelerates durable dirty-file backups, then immediately materializes the workspace target so later writes cannot mutate the backup inode.
+- ReFS volumes are reported as block-clone candidates, but block clone is not used until Hyperion has an explicit native Windows API layer.
 
 Remaining roadmap direction:
 
-- `getDiagnostics()` exposes whether active checkpoints use `tmpfs`, `posix-link`, or `pure-manifest`, plus Hot Dirty Buffer hit/spill counters.
-- Explore Windows-native acceleration such as NTFS hard links, Windows Dev Drive, and ReFS block cloning.
+- `getDiagnostics()` exposes whether active checkpoints use `tmpfs`, `posix-link`, `ntfs-link`, or `pure-manifest`, plus Hot Dirty Buffer hit/spill counters and Windows volume signals.
+- Explore ReFS block cloning through `FSCTL_DUPLICATE_EXTENTS_TO_FILE` as an optional native-helper strategy.
 
 Future conceptual strategy shape:
 
@@ -91,6 +94,8 @@ type StorageStrategyKind =
   | "tmpfs"
   | "hot-buffer"
   | "posix-link"
+  | "ntfs-link"
+  | "refs-block-clone"
   | "pure-manifest";
 ```
 
@@ -98,7 +103,11 @@ This does not make Windows identical to Linux tmpfs for every workload, but it n
 
 ### Alternatives Considered
 
-Windows-native acceleration should still be explored. NTFS hard links, Windows Dev Drive, and ReFS block cloning may become useful strategy tiers. They should not block the Hot Dirty Buffer because they depend on filesystem configuration and OS-specific behavior.
+NTFS hard links are useful but are not copy-on-write by themselves. Hyperion must detach the workspace target after creating the backup link, otherwise later writes could corrupt the saved backup content.
+
+Dev Drive is valuable because it tunes Windows developer I/O behavior, especially around ReFS and filter policy, but it is not a rollback strategy. Hyperion treats it as diagnostics and environment context.
+
+ReFS block cloning is the closest Windows-native CoW primitive, but Node does not expose `FSCTL_DUPLICATE_EXTENTS_TO_FILE` through the standard library. Implementing it should be a future optional native-helper slice, not a hidden dependency in the zero-dependency SDK.
 
 Accepting pure manifest fallback only is safe, but it leaves too much performance on the table for Windows-heavy teams.
 

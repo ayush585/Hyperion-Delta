@@ -3,8 +3,10 @@ import { describe, it } from "node:test";
 
 import {
   discoverEnvironmentProfile,
+  probeWindowsHardLinkCapability,
   type EnvironmentProbeAdapter,
   type EnvironmentProfile,
+  type WindowsHardLinkProbeAdapter,
 } from "../src/internal/environment.js";
 import { selectStorageStrategy } from "../src/internal/strategy.js";
 import type { ResolvedHyperionConfig } from "../src/types.js";
@@ -147,16 +149,171 @@ describe("environment discovery", () => {
     assert.equal(windowsProfile.caseSensitive, false);
     assert.equal(linuxProfile.caseSensitive, true);
   });
+
+  it("discovers Windows NTFS, ReFS, and Dev Drive volume signals", () => {
+    const ntfsProfile = discoverEnvironmentProfile(
+      { workspaceRoot: "C:\\repo", sessionRoot: "C:\\repo\\.hyperion\\checkpoints" },
+      createAdapter({
+        platform: "win32",
+        execFileSync(command, args) {
+          if (command === "fsutil" && args.join(" ") === "fsinfo volumeinfo C:") {
+            return "Volume Name : Dev\nFile System Name : NTFS\n";
+          }
+
+          if (command === "fsutil" && args.join(" ") === "devdrv query C:") {
+            return "This is a trusted developer volume";
+          }
+
+          return undefined;
+        },
+      }),
+    );
+    const refsProfile = discoverEnvironmentProfile(
+      { workspaceRoot: "D:\\repo", sessionRoot: "D:\\repo\\.hyperion\\checkpoints" },
+      createAdapter({
+        platform: "win32",
+        execFileSync(command, args) {
+          if (command === "fsutil" && args.join(" ") === "fsinfo volumeinfo D:") {
+            return "File System Name : ReFS\n";
+          }
+
+          if (command === "fsutil" && args.join(" ") === "devdrv query D:") {
+            return "This is not a dev drive";
+          }
+
+          return undefined;
+        },
+      }),
+    );
+
+    assert.equal(ntfsProfile.windowsVolume?.fileSystemName, "NTFS");
+    assert.equal(ntfsProfile.windowsVolume?.isDevDrive, true);
+    assert.equal(ntfsProfile.windowsVolume?.devDriveTrusted, true);
+    assert.equal(ntfsProfile.windowsVolume?.hardLinkCapable, false);
+    assert.equal(ntfsProfile.windowsVolume?.blockCloneCandidate, false);
+    assert.equal(refsProfile.windowsVolume?.fileSystemName, "ReFS");
+    assert.equal(refsProfile.windowsVolume?.isDevDrive, false);
+    assert.equal(refsProfile.windowsVolume?.blockCloneCandidate, true);
+  });
+
+  it("degrades Windows volume discovery when fsutil is unavailable", () => {
+    const profile = discoverEnvironmentProfile(
+      { workspaceRoot: "C:\\repo", sessionRoot: "C:\\repo\\.hyperion\\checkpoints" },
+      createAdapter({
+        platform: "win32",
+        execFileSync() {
+          throw new Error("fsutil unavailable");
+        },
+      }),
+    );
+
+    assert.equal(profile.windowsVolume?.fileSystemName, undefined);
+    assert.equal(profile.windowsVolume?.isDevDrive, false);
+    assert.equal(profile.windowsVolume?.devDriveTrusted, false);
+    assert.equal(profile.windowsVolume?.hardLinkCapable, false);
+    assert.equal(profile.windowsVolume?.blockCloneCandidate, false);
+  });
+
+  it("probes Windows hard-link capability inside Hyperion-owned storage", () => {
+    const calls: string[] = [];
+    const adapter: WindowsHardLinkProbeAdapter = {
+      mkdirSync(path) {
+        calls.push(`mkdir:${path}`);
+      },
+      writeFileSync(path) {
+        calls.push(`write:${path}`);
+      },
+      linkSync(source, target) {
+        calls.push(`link:${source}->${target}`);
+      },
+      rmSync(path) {
+        calls.push(`rm:${path}`);
+      },
+    };
+
+    assert.equal(probeWindowsHardLinkCapability("C:\\repo\\.hyperion\\checkpoints", adapter), true);
+    assert.equal(calls.some((call) => call.startsWith("link:")), true);
+    assert.equal(calls.filter((call) => call.startsWith("rm:")).length, 3);
+  });
+
+  it("reports failed Windows hard-link probes conservatively", () => {
+    const adapter: WindowsHardLinkProbeAdapter = {
+      mkdirSync() {},
+      writeFileSync() {},
+      linkSync() {
+        throw new Error("links disabled");
+      },
+      rmSync() {},
+    };
+
+    assert.equal(probeWindowsHardLinkCapability("C:\\repo\\.hyperion\\checkpoints", adapter), false);
+  });
 });
 
 describe("strategy selector", () => {
-  it("selects Tier 3 on Windows", () => {
+  it("selects Tier 3 on Windows without verified native links", () => {
     const selection = selectStorageStrategy(
       createConfig(),
       createProfile({ platform: "win32", hasRsync: true, sameDeviceForLinks: true }),
     );
 
     assert.equal(selection.kind, "pure-manifest");
+  });
+
+  it("selects NTFS link storage on Windows when hard links are verified", () => {
+    const selection = selectStorageStrategy(
+      createConfig(),
+      createProfile({
+        platform: "win32",
+        sameDeviceForLinks: true,
+        windowsVolume: {
+          fileSystemName: "NTFS",
+          isDevDrive: false,
+          devDriveTrusted: false,
+          hardLinkCapable: true,
+          blockCloneCandidate: false,
+        },
+      }),
+    );
+
+    assert.equal(selection.kind, "ntfs-link");
+    assert.equal(selection.reason, "ntfs-links-available");
+  });
+
+  it("keeps ReFS and Dev Drive on Pure Manifest until block clone is implemented", () => {
+    const refsSelection = selectStorageStrategy(
+      createConfig(),
+      createProfile({
+        platform: "win32",
+        sameDeviceForLinks: true,
+        windowsVolume: {
+          fileSystemName: "ReFS",
+          isDevDrive: true,
+          devDriveTrusted: true,
+          hardLinkCapable: false,
+          blockCloneCandidate: true,
+        },
+      }),
+    );
+    const crossDeviceSelection = selectStorageStrategy(
+      createConfig(),
+      createProfile({
+        platform: "win32",
+        sameDeviceForLinks: false,
+        windowsVolume: {
+          fileSystemName: "NTFS",
+          isDevDrive: false,
+          devDriveTrusted: false,
+          hardLinkCapable: true,
+          blockCloneCandidate: false,
+        },
+      }),
+    );
+
+    assert.equal(refsSelection.kind, "pure-manifest");
+    assert.equal(refsSelection.reason, "windows-block-clone-unimplemented");
+    assert.equal(crossDeviceSelection.kind, "pure-manifest");
+    assert.equal(crossDeviceSelection.reason, "cross-device-link-risk");
   });
 
   it("selects Tier 1 when Linux tmpfs is usable", () => {

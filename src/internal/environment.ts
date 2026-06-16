@@ -1,5 +1,17 @@
-import { constants, accessSync, existsSync, readFileSync, statSync } from "node:fs";
+import {
+  constants,
+  accessSync,
+  existsSync,
+  linkSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { execFileSync } from "node:child_process";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
 
 export type RuntimePlatform = NodeJS.Platform;
 
@@ -12,6 +24,15 @@ export interface EnvironmentProfile {
   gitAvailable: boolean;
   sameDeviceForLinks: boolean;
   caseSensitive: boolean;
+  windowsVolume?: WindowsVolumeProfile | undefined;
+}
+
+export interface WindowsVolumeProfile {
+  fileSystemName?: string | undefined;
+  isDevDrive: boolean;
+  devDriveTrusted: boolean;
+  hardLinkCapable: boolean;
+  blockCloneCandidate: boolean;
 }
 
 export interface EnvironmentProbeOptions {
@@ -26,7 +47,14 @@ export interface EnvironmentProbeAdapter {
   accessSync(path: string, mode: number): void;
   readFileSync(path: string, encoding: BufferEncoding): string;
   statSync(path: string): { dev: number };
-  execFileSync(command: string, args: readonly string[]): void;
+  execFileSync(command: "git" | "rsync" | "fsutil", args: readonly string[]): string | void;
+}
+
+export interface WindowsHardLinkProbeAdapter {
+  mkdirSync(path: string, options: { recursive?: boolean }): void;
+  writeFileSync(path: string, data: string): void;
+  linkSync(existingPath: string, newPath: string): void;
+  rmSync(path: string, options: { force?: boolean; recursive?: boolean }): void;
 }
 
 export const nodeEnvironmentProbeAdapter: EnvironmentProbeAdapter = {
@@ -36,9 +64,16 @@ export const nodeEnvironmentProbeAdapter: EnvironmentProbeAdapter = {
   accessSync,
   readFileSync,
   statSync,
-  execFileSync(command, args): void {
-    execFileSync(command, [...args], { stdio: "ignore" });
+  execFileSync(command, args) {
+    return execFileSync(command, [...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
   },
+};
+
+export const nodeWindowsHardLinkProbeAdapter: WindowsHardLinkProbeAdapter = {
+  mkdirSync,
+  writeFileSync,
+  linkSync,
+  rmSync,
 };
 
 export function discoverEnvironmentProfile(
@@ -58,7 +93,45 @@ export function discoverEnvironmentProfile(
     gitAvailable: commandAvailable("git", adapter),
     sameDeviceForLinks: detectSameDevice(options.workspaceRoot, options.sessionRoot, adapter),
     caseSensitive: inferCaseSensitivity(platform),
+    windowsVolume: platform === "win32" ? discoverWindowsVolumeProfile(options.workspaceRoot, adapter) : undefined,
   };
+}
+
+export function probeWindowsHardLinkCapability(
+  sessionRoot: string,
+  adapter: WindowsHardLinkProbeAdapter = nodeWindowsHardLinkProbeAdapter,
+): boolean {
+  const probeDirectory = path.join(sessionRoot, ".windows-link-probe");
+  const probeId = randomUUID();
+  const sourcePath = path.join(probeDirectory, `${probeId}.source`);
+  const linkPath = path.join(probeDirectory, `${probeId}.link`);
+
+  try {
+    adapter.mkdirSync(probeDirectory, { recursive: true });
+    adapter.writeFileSync(sourcePath, "hyperion-windows-link-probe");
+    adapter.linkSync(sourcePath, linkPath);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    try {
+      adapter.rmSync(sourcePath, { force: true });
+    } catch {
+      // Probe cleanup is best-effort inside Hyperion-owned session storage.
+    }
+
+    try {
+      adapter.rmSync(linkPath, { force: true });
+    } catch {
+      // Probe cleanup is best-effort inside Hyperion-owned session storage.
+    }
+
+    try {
+      adapter.rmSync(probeDirectory, { recursive: true, force: true });
+    } catch {
+      // Probe cleanup is best-effort inside Hyperion-owned session storage.
+    }
+  }
 }
 
 function detectWsl2(adapter: EnvironmentProbeAdapter): boolean {
@@ -84,6 +157,76 @@ function commandAvailable(command: "git" | "rsync", adapter: EnvironmentProbeAda
     return true;
   } catch {
     return false;
+  }
+}
+
+function discoverWindowsVolumeProfile(
+  workspaceRoot: string,
+  adapter: EnvironmentProbeAdapter,
+): WindowsVolumeProfile {
+  const volumePath = getWindowsVolumePath(workspaceRoot);
+  const fileSystemName = volumePath ? readWindowsFileSystemName(volumePath, adapter) : undefined;
+  const devDriveInfo = volumePath ? readWindowsDevDriveInfo(volumePath, adapter) : {
+    isDevDrive: false,
+    devDriveTrusted: false,
+  };
+
+  return {
+    fileSystemName,
+    isDevDrive: devDriveInfo.isDevDrive,
+    devDriveTrusted: devDriveInfo.devDriveTrusted,
+    hardLinkCapable: false,
+    blockCloneCandidate: fileSystemName?.toUpperCase() === "REFS",
+  };
+}
+
+function getWindowsVolumePath(workspaceRoot: string): string | undefined {
+  const normalizedRoot = workspaceRoot.replace(/^\\\\\?\\/, "");
+  const match = /^([a-zA-Z]:)/.exec(normalizedRoot);
+  return match?.[1];
+}
+
+function readWindowsFileSystemName(
+  volumePath: string,
+  adapter: EnvironmentProbeAdapter,
+): string | undefined {
+  try {
+    const output = adapter.execFileSync("fsutil", ["fsinfo", "volumeinfo", volumePath]);
+
+    if (typeof output !== "string") {
+      return undefined;
+    }
+
+    return /File System Name\s*:\s*([^\r\n]+)/i.exec(output)?.[1]?.trim();
+  } catch {
+    return undefined;
+  }
+}
+
+function readWindowsDevDriveInfo(
+  volumePath: string,
+  adapter: EnvironmentProbeAdapter,
+): { isDevDrive: boolean; devDriveTrusted: boolean } {
+  try {
+    const output = adapter.execFileSync("fsutil", ["devdrv", "query", volumePath]);
+
+    if (typeof output !== "string") {
+      return { isDevDrive: false, devDriveTrusted: false };
+    }
+
+    const normalized = output.toLowerCase();
+    const isDevDrive =
+      (normalized.includes("dev drive") || normalized.includes("developer volume")) &&
+      !normalized.includes("not a dev drive");
+    const devDriveTrusted =
+      isDevDrive &&
+      (normalized.includes("trusted dev drive") || normalized.includes("trusted developer volume")) &&
+      !normalized.includes("not trusted") &&
+      !normalized.includes("untrusted");
+
+    return { isDevDrive, devDriveTrusted };
+  } catch {
+    return { isDevDrive: false, devDriveTrusted: false };
   }
 }
 

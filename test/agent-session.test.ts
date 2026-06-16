@@ -73,7 +73,7 @@ describe("HyperionAgentSession", () => {
 
     assert.equal(session.workspace.root, path.resolve(root));
     assert.equal(session.workspace.isFsInterceptorInstalled, true);
-    assert.ok(["tmpfs", "posix-link", "pure-manifest"].includes(session.strategy));
+    assert.ok(["tmpfs", "posix-link", "ntfs-link", "pure-manifest"].includes(session.strategy));
   });
 
   it("returns checkpoint IDs through the wrapper snapshot method", async () => {

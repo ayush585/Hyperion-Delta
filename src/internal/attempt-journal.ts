@@ -375,6 +375,7 @@ function isAttemptJournalEntry(value: unknown): value is AttemptJournalEntry {
       candidate.status === "promoted") &&
     (candidate.strategy === "tmpfs" ||
       candidate.strategy === "posix-link" ||
+      candidate.strategy === "ntfs-link" ||
       candidate.strategy === "pure-manifest") &&
     Array.isArray(candidate.ignoredPatterns) &&
     !!candidate.baseline &&
