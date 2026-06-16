@@ -22,6 +22,8 @@ import {
   type HyperionExecResult,
   type HyperionPromoteOptions,
   type HyperionPromotionResult,
+  type HyperionToolOutputContract,
+  type HyperionToolOutputPath,
   type RecoverableAttempt,
   type ReconcileResult,
   type StateManifest,
@@ -90,6 +92,15 @@ describe("package exports", () => {
     };
     const attemptOptions: HyperionAttemptOptions = { rollbackOnThrow: true };
     const promoteOptions: HyperionPromoteOptions = { exportPatch: true };
+    const toolOutputPath: HyperionToolOutputPath = {
+      path: "dist/generated.js",
+      optional: true,
+    };
+    const toolOutputContract: HyperionToolOutputContract = {
+      toolName: "codegen",
+      checkpointId,
+      outputs: [toolOutputPath, "node_modules/.cache/tool.json"],
+    };
     const execOptions: HyperionExecOptions = { captureOutput: true };
     const execResult: HyperionExecResult = {
       command: "node",
@@ -132,6 +143,7 @@ describe("package exports", () => {
     assert.equal(diagnostics.lastReconcileResult?.checkpointId, checkpointId);
     assert.equal(attemptOptions.rollbackOnThrow, true);
     assert.equal(promoteOptions.exportPatch, true);
+    assert.equal(toolOutputContract.outputs.length, 2);
     assert.equal(execOptions.captureOutput, true);
     assert.equal(execResult.exitCode, 0);
     assert.equal(attemptResult.result, 1);
@@ -141,6 +153,8 @@ describe("package exports", () => {
     assert.equal(typeof HyperionAgentSession.prototype.exportPatch, "function");
     assert.equal(typeof HyperionWorkspace.prototype.promote, "function");
     assert.equal(typeof HyperionAgentSession.prototype.promote, "function");
+    assert.equal(typeof HyperionWorkspace.prototype.declareToolOutputs, "function");
+    assert.equal(typeof HyperionAgentSession.prototype.declareToolOutputs, "function");
     assert.equal(typeof HyperionWorkspace.prototype.rehydrateAttempt, "function");
     assert.equal(typeof HyperionAgentSession.prototype.rehydrateAttempt, "function");
   });

@@ -34,6 +34,8 @@ export type {
   HyperionConfig,
   HyperionPromoteOptions,
   HyperionPromotionResult,
+  HyperionToolOutputContract,
+  HyperionToolOutputPath,
   RecoverableAttempt,
   ReconcileResult,
   ResolvedHyperionConfig,

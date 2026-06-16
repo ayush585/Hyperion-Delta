@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { once } from "node:events";
 import { createRequire } from "node:module";
 import {
   existsSync,
@@ -547,6 +548,35 @@ describe("HyperionWorkspace", () => {
       "custom-output/file.txt",
     ]);
     assert.deepEqual(getManualTrackedIgnoredPaths(workspace), ["custom-output/file.txt"]);
+  });
+
+  it("declares exact tool outputs and rejects invalid contract paths", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+
+    assert.doesNotThrow(() => {
+      workspace.declareToolOutputs({
+        toolName: "npm",
+        checkpointId,
+        outputs: [
+          "node_modules/.cache/npm/output.json",
+          { path: "dist/generated.js", optional: true },
+        ],
+      });
+    });
+    assert.throws(
+      () => workspace.declareToolOutputs({ toolName: "npm", outputs: [] }),
+      HyperionPathError,
+    );
+    assert.throws(
+      () => workspace.declareToolOutputs({ toolName: "", outputs: ["dist/file.js"] }),
+      HyperionPathError,
+    );
+    assert.throws(
+      () => workspace.declareToolOutputs({ toolName: "npm", outputs: ["../outside.txt"] }),
+      HyperionPathError,
+    );
   });
 
   it("matches constrained ignore globs used by the SDK defaults", () => {
@@ -1358,6 +1388,116 @@ describe("HyperionWorkspace", () => {
     assert.ok(checkpoint);
     checkpoint.status = "rolling-back";
     await assert.rejects(() => workspace.promote(rollingId), HyperionRollbackError);
+  });
+
+  it("allows declared ignored outputs under strict mode across VFS API families", async () => {
+    const root = createTempWorkspace();
+    const fs = getCommonJsFs();
+    const workspace = new HyperionWorkspace({
+      workspaceRoot: root,
+      strictIgnoredWrites: true,
+    });
+    workspace.installFsInterceptor();
+    const checkpointId = await workspace.snapshot();
+    workspace.declareToolOutputs({
+      toolName: "tool-suite",
+      checkpointId,
+      outputs: [
+        "node_modules/pkg/sync.txt",
+        "dist/callback.txt",
+        ".git/promise.txt",
+        ".hyperion/tool-contract/stream.txt",
+      ],
+    });
+
+    mkdirSync(join(root, "node_modules", "pkg"), { recursive: true });
+    mkdirSync(join(root, "dist"), { recursive: true });
+    mkdirSync(join(root, ".git"), { recursive: true });
+    mkdirSync(join(root, ".hyperion", "tool-contract"), { recursive: true });
+    fs.writeFileSync(join(root, "node_modules", "pkg", "sync.txt"), "sync\n");
+    await new Promise<void>((resolvePromise, rejectPromise) => {
+      fs.writeFile(join(root, "dist", "callback.txt"), "callback\n", (error) => {
+        if (error) {
+          rejectPromise(error);
+          return;
+        }
+
+        resolvePromise();
+      });
+    });
+    await fs.promises.writeFile(join(root, ".git", "promise.txt"), "promise\n");
+    const stream = fs.createWriteStream(join(root, ".hyperion", "tool-contract", "stream.txt"));
+    stream.end("stream\n");
+    await once(stream, "finish");
+
+    const result = await workspace.reconcile(checkpointId);
+
+    assert.equal(result.created.includes("node_modules/pkg/sync.txt"), true);
+    assert.equal(result.created.includes("dist/callback.txt"), true);
+    assert.equal(result.created.includes(".git/promise.txt"), true);
+    assert.equal(result.created.includes(".hyperion/tool-contract/stream.txt"), true);
+    assert.equal(
+      getWorkspaceCheckpoint(workspace, checkpointId)?.dirty.get("node_modules/pkg/sync.txt")
+        ?.capturedBy,
+      "tool-contract",
+    );
+  });
+
+  it("restores declared ignored outputs modified or deleted through VFS", async () => {
+    const root = createTempWorkspace();
+    const fs = getCommonJsFs();
+    mkdirSync(join(root, "node_modules", "pkg"), { recursive: true });
+    writeFileSync(join(root, "node_modules", "pkg", "modified.txt"), "before\n");
+    writeFileSync(join(root, "node_modules", "pkg", "deleted.txt"), "delete me\n");
+    const workspace = new HyperionWorkspace({
+      workspaceRoot: root,
+      strictIgnoredWrites: true,
+    });
+    workspace.declareToolOutputs({
+      toolName: "package-manager",
+      outputs: [
+        "node_modules/pkg/modified.txt",
+        "node_modules/pkg/deleted.txt",
+      ],
+    });
+    workspace.installFsInterceptor();
+    const checkpointId = await workspace.snapshot();
+
+    fs.writeFileSync(join(root, "node_modules", "pkg", "modified.txt"), "after\n");
+    fs.unlinkSync(join(root, "node_modules", "pkg", "deleted.txt"));
+    await workspace.rollback(checkpointId);
+
+    assert.equal(readFileSync(join(root, "node_modules", "pkg", "modified.txt"), "utf8"), "before\n");
+    assert.equal(readFileSync(join(root, "node_modules", "pkg", "deleted.txt"), "utf8"), "delete me\n");
+  });
+
+  it("reconciles declared ignored child-process creates without scanning broad ignored roots", async () => {
+    const root = createTempWorkspace();
+    mkdirSync(join(root, "node_modules", "pkg"), { recursive: true });
+    const workspace = new HyperionWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    workspace.declareToolOutputs({
+      toolName: "codegen",
+      checkpointId,
+      outputs: ["node_modules/pkg/generated.txt"],
+    });
+
+    runChildProcessScript(
+      root,
+      [
+        "const fs = require('node:fs');",
+        "fs.mkdirSync('node_modules/pkg', { recursive: true });",
+        "fs.writeFileSync('node_modules/pkg/generated.txt', 'declared');",
+        "fs.writeFileSync('node_modules/pkg/undeclared.txt', 'ignored');",
+      ].join(""),
+    );
+
+    const result = await workspace.reconcile(checkpointId);
+
+    assert.deepEqual(result.created, ["node_modules/pkg/generated.txt"]);
+    await workspace.rollback(checkpointId);
+    assert.equal(existsSync(join(root, "node_modules", "pkg", "generated.txt")), false);
+    assert.equal(existsSync(join(root, "node_modules", "pkg", "undeclared.txt")), true);
   });
 
   it("deletes files created after snapshot during rollback", async () => {

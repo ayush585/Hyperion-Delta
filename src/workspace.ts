@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, lstatSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -46,7 +46,7 @@ import {
   type StrategySelection,
 } from "./internal/strategy.js";
 import { createCheckpointStorage } from "./internal/storage-factory.js";
-import type { StorageStrategy } from "./internal/storage-strategy.js";
+import type { StorageBackupRecord, StorageStrategy } from "./internal/storage-strategy.js";
 import { VfsInterceptor, type VfsMutationRecord } from "./internal/vfs-interceptor.js";
 import type {
   CheckpointId,
@@ -54,6 +54,8 @@ import type {
   HyperionConfig,
   HyperionPromoteOptions,
   HyperionPromotionResult,
+  HyperionToolOutputContract,
+  HyperionToolOutputPath,
   RecoverableAttempt,
   ReconcileResult,
   ResolvedHyperionConfig,
@@ -66,6 +68,13 @@ interface IgnoredWriteEvent {
   relativePath: string;
   kind: VfsMutationRecord["kind"];
   capturedAt: number;
+}
+
+interface ToolOutputDeclaration {
+  toolName: string;
+  relativePath: string;
+  optional: boolean;
+  declaredAt: number;
 }
 
 export class HyperionWorkspace {
@@ -89,6 +98,11 @@ export class HyperionWorkspace {
   private readonly lifecycleCleanupRegistry = new LifecycleCleanupRegistry();
   private readonly manualTrackedPaths = new Set<string>();
   private readonly manualTrackedIgnoredPaths = new Set<string>();
+  private readonly toolOutputDeclarations = new Map<string, ToolOutputDeclaration>();
+  private readonly checkpointToolOutputDeclarations = new Map<
+    CheckpointId,
+    Map<string, ToolOutputDeclaration>
+  >();
   private sessionDeviceInfo?: SessionDeviceInfo;
   private emergencyCleanupCompleted = false;
   private disposed = false;
@@ -147,6 +161,39 @@ export class HyperionWorkspace {
     }
   }
 
+  public declareToolOutputs(contract: HyperionToolOutputContract): void {
+    this.assertNotDisposed("declareToolOutputs()");
+
+    if (!contract || typeof contract !== "object") {
+      throw new HyperionPathError("Tool output contract must be an object");
+    }
+
+    if (typeof contract.toolName !== "string" || contract.toolName.trim() === "") {
+      throw new HyperionPathError("Tool output contract requires a non-empty toolName");
+    }
+
+    if (!Array.isArray(contract.outputs) || contract.outputs.length === 0) {
+      throw new HyperionPathError("Tool output contract requires at least one output");
+    }
+
+    const checkpoint = contract.checkpointId
+      ? this.requireActiveCheckpoint(contract.checkpointId)
+      : undefined;
+    const declarations = contract.outputs.map((output) =>
+      this.createToolOutputDeclaration(contract.toolName, output),
+    );
+
+    for (const declaration of declarations) {
+      if (checkpoint) {
+        const checkpointDeclarations = this.getCheckpointToolOutputDeclarations(checkpoint.id);
+        checkpointDeclarations.set(declaration.relativePath, declaration);
+        this.addDeclaredOutputToBaseline(checkpoint, declaration.relativePath);
+      } else {
+        this.toolOutputDeclarations.set(declaration.relativePath, declaration);
+      }
+    }
+  }
+
   public async snapshot(): Promise<CheckpointId> {
     this.assertNotDisposed("snapshot()");
     this.runCapacityGarbageCollection();
@@ -155,7 +202,7 @@ export class HyperionWorkspace {
     const deviceInfo = this.probeSessionDeviceInfo();
     this.refreshStrategySelection(deviceInfo);
 
-    const baseline = this.stateEngine.captureManifest();
+    const baseline = this.withDeclaredToolOutputStats(this.stateEngine.captureManifest());
     const checkpoint = this.checkpointStore.createCheckpoint({
       baseline,
       deviceId: deviceInfo.workspaceDeviceId,
@@ -222,7 +269,10 @@ export class HyperionWorkspace {
       };
     }
 
-    const currentManifest = this.stateEngine.captureManifest();
+    const currentManifest = this.withDeclaredToolOutputStats(
+      this.stateEngine.captureManifest(),
+      checkpoint,
+    );
     const result = this.reconciliationEngine.reconcile({ checkpoint, currentManifest });
     this.writeAttemptJournalBestEffort(checkpoint);
     return result;
@@ -458,6 +508,104 @@ export class HyperionWorkspace {
     }
   }
 
+  private createToolOutputDeclaration(
+    toolName: string,
+    output: HyperionToolOutputPath,
+  ): ToolOutputDeclaration {
+    const outputPath = typeof output === "string" ? output : output?.path;
+
+    if (typeof outputPath !== "string" || outputPath.trim() === "") {
+      throw new HyperionPathError("Tool output paths must be non-empty strings");
+    }
+
+    return {
+      toolName: toolName.trim(),
+      relativePath: normalizeWorkspacePath(this.root, outputPath),
+      optional: typeof output === "object" ? output.optional ?? false : false,
+      declaredAt: Date.now(),
+    };
+  }
+
+  private getCheckpointToolOutputDeclarations(
+    checkpointId: CheckpointId,
+  ): Map<string, ToolOutputDeclaration> {
+    const existing = this.checkpointToolOutputDeclarations.get(checkpointId);
+
+    if (existing) {
+      return existing;
+    }
+
+    const created = new Map<string, ToolOutputDeclaration>();
+    this.checkpointToolOutputDeclarations.set(checkpointId, created);
+    return created;
+  }
+
+  private addDeclaredOutputToBaseline(
+    checkpoint: StoredCheckpoint,
+    relativePath: string,
+  ): void {
+    const statEntry = this.statDeclaredOutput(relativePath);
+
+    if (statEntry) {
+      checkpoint.baseline.statEntries.set(relativePath, statEntry);
+      this.writeAttemptJournalBestEffort(checkpoint);
+    }
+  }
+
+  private withDeclaredToolOutputStats(
+    manifest: StateManifest,
+    checkpoint?: StoredCheckpoint,
+  ): StateManifest {
+    const declaredPaths = new Set<string>(this.toolOutputDeclarations.keys());
+
+    if (checkpoint) {
+      for (const relativePath of this.getCheckpointToolOutputDeclarations(checkpoint.id).keys()) {
+        declaredPaths.add(relativePath);
+      }
+    }
+
+    for (const relativePath of declaredPaths) {
+      const statEntry = this.statDeclaredOutput(relativePath);
+
+      if (statEntry) {
+        manifest.statEntries.set(relativePath, statEntry);
+      } else {
+        manifest.statEntries.delete(relativePath);
+      }
+    }
+
+    return manifest;
+  }
+
+  private statDeclaredOutput(relativePath: string): StatLedgerEntry | undefined {
+    try {
+      const stat = lstatSync(join(this.root, ...relativePath.split("/")));
+
+      return {
+        relativePath,
+        type: stat.isSymbolicLink() ? "symlink" : stat.isDirectory() ? "directory" : "file",
+        size: stat.size,
+        mtimeMs: stat.mtimeMs,
+        mode: stat.mode,
+      };
+    } catch {
+      return undefined;
+    }
+  }
+
+  private isDeclaredToolOutput(
+    relativePath: string,
+    checkpoint?: StoredCheckpoint,
+  ): boolean {
+    if (this.toolOutputDeclarations.has(relativePath)) {
+      return true;
+    }
+
+    return checkpoint
+      ? this.getCheckpointToolOutputDeclarations(checkpoint.id).has(relativePath)
+      : false;
+  }
+
   private backupCheckpointPath(checkpointId: CheckpointId, pathOrPathLike: string): void {
     this.requireKnownCheckpoint(checkpointId);
     const storage = this.requireCheckpointStorage(checkpointId);
@@ -474,14 +622,16 @@ export class HyperionWorkspace {
       .filter((entry): entry is { record: VfsMutationRecord; relativePath: string } =>
         entry.relativePath !== undefined,
       );
+    const checkpoint = this.checkpointStore.getMostRecentActiveCheckpoint();
 
     for (const { record, relativePath } of normalizedRecords) {
-      if (this.ignoreMatcher.matches(relativePath)) {
+      if (
+        this.ignoreMatcher.matches(relativePath) &&
+        !this.isDeclaredToolOutput(relativePath, checkpoint)
+      ) {
         this.recordIgnoredWrite(relativePath, record);
       }
     }
-
-    const checkpoint = this.checkpointStore.getMostRecentActiveCheckpoint();
 
     if (!checkpoint) {
       return;
@@ -494,14 +644,18 @@ export class HyperionWorkspace {
     }
 
     for (const { record, relativePath } of normalizedRecords) {
-      if (this.ignoreMatcher.matches(relativePath)) {
+      const capturedBy = this.ignoreMatcher.matches(relativePath)
+        ? "tool-contract"
+        : "vfs";
+
+      if (capturedBy === "tool-contract" && !this.isDeclaredToolOutput(relativePath, checkpoint)) {
         continue;
       }
 
-      storage.backupFile(relativePath);
+      const backupRecord = storage.backupFile(relativePath);
       checkpoint.dirty.set(
         relativePath,
-        this.createVfsDirtyEntry(checkpoint, relativePath, record),
+        this.createVfsDirtyEntry(checkpoint, relativePath, record, capturedBy, backupRecord),
       );
     }
 
@@ -547,15 +701,17 @@ export class HyperionWorkspace {
     checkpoint: StoredCheckpoint,
     relativePath: string,
     record: VfsMutationRecord,
+    capturedBy: "vfs" | "tool-contract",
+    backupRecord: StorageBackupRecord,
   ): DirtyEntry {
     const now = Date.now();
     const existingEntry = checkpoint.dirty.get(relativePath);
     const baselineEntry = checkpoint.baseline.statEntries.get(relativePath);
     const dirtyEntry: DirtyEntry = {
       relativePath,
-      kind: inferVfsDirtyKind(record, baselineEntry),
-      fileType: baselineEntry?.type ?? record.fileTypeHint ?? "unknown",
-      capturedBy: "vfs",
+      kind: inferVfsDirtyKind(record, baselineEntry, backupRecord),
+      fileType: baselineEntry?.type ?? backupRecordFileType(backupRecord) ?? record.fileTypeHint ?? "unknown",
+      capturedBy,
       firstSeenAt: existingEntry?.firstSeenAt ?? now,
       lastSeenAt: now,
     };
@@ -835,8 +991,13 @@ function dirtyMapFromJournal(journal: AttemptJournalEntry): Map<string, DirtyEnt
 function inferVfsDirtyKind(
   record: VfsMutationRecord,
   baselineEntry: StatLedgerEntry | undefined,
+  backupRecord: StorageBackupRecord,
 ): DirtyEntry["kind"] {
   if (!baselineEntry) {
+    if (backupRecord.kind !== "missing") {
+      return record.kind === "delete" ? "deleted" : "modified";
+    }
+
     return "created";
   }
 
@@ -849,4 +1010,14 @@ function inferVfsDirtyKind(
   }
 
   return "modified";
+}
+
+function backupRecordFileType(
+  backupRecord: StorageBackupRecord,
+): DirtyEntry["fileType"] | undefined {
+  if (backupRecord.kind === "file" || backupRecord.kind === "directory" || backupRecord.kind === "symlink") {
+    return backupRecord.kind;
+  }
+
+  return undefined;
 }

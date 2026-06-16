@@ -6,6 +6,7 @@ import type {
   HyperionConfig,
   HyperionPromoteOptions,
   HyperionPromotionResult,
+  HyperionToolOutputContract,
   RecoverableAttempt,
   ReconcileResult,
   StorageStrategyKind,
@@ -137,6 +138,10 @@ export class HyperionAgentSession {
 
   public snapshot(): Promise<CheckpointId> {
     return this.workspace.snapshot();
+  }
+
+  public declareToolOutputs(contract: HyperionToolOutputContract): void {
+    this.workspace.declareToolOutputs(contract);
   }
 
   public async reconcile(checkpointId?: CheckpointId): Promise<ReconcileResult> {

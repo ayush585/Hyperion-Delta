@@ -173,6 +173,20 @@ describe("HyperionAgentSession", () => {
     await assert.rejects(() => session.rollback(checkpointId), /promoted/);
   });
 
+  it("delegates declareToolOutputs() to the workspace", async () => {
+    const root = createTempWorkspace();
+    const session = createSession(root);
+    const checkpointId = await session.snapshot();
+
+    assert.doesNotThrow(() => {
+      session.declareToolOutputs({
+        toolName: "formatter",
+        checkpointId,
+        outputs: ["dist/formatter-cache.json"],
+      });
+    });
+  });
+
   it("delegates rehydrateAttempt() to the workspace", async () => {
     const root = createTempWorkspace();
     const session = createSession(root);

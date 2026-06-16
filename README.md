@@ -70,6 +70,7 @@ The package exports two runtime entry points:
 Core methods:
 
 - `track(path | paths)`: manually register paths for future integrations that cannot use interception.
+- `declareToolOutputs(contract)`: declare exact generated or ignored tool outputs so they can be tracked without broad ignored-root scans.
 - `snapshot()`: capture a checkpoint and return a `CheckpointId`.
 - `reconcile(checkpointId?)`: refresh dirty-set state after child-process or native-tool writes.
 - `rollback(checkpointId)`: reconcile, restore dirty paths, delete created paths, and clean ghost directories.
@@ -89,6 +90,23 @@ Public types and errors are exported from the package root, including `HyperionC
 Small regular-file backups use a bounded in-memory Hot Dirty Buffer by default before spilling to the selected physical strategy. Tune it with `useHotBuffer`, `hotBufferMaxFileBytes`, `hotBufferMaxTotalBytes`, and `hotBufferMaxFiles`; the exported defaults are `256 KiB` per file, `8 MiB` total, and `1024` files.
 
 Ignored dependency and generated-output roots are still excluded from broad scans, but VFS-captured writes into ignored paths can be made fail-fast with `strictIgnoredWrites: true`. Explicit `track()` calls may name exact ignored paths for future tool-adapter integrations without expanding broad reconciliation walks.
+
+Tool integrations can declare exact generated outputs with `declareToolOutputs()`. Declared paths under ignored roots such as `node_modules/**`, `.git/**`, `.hyperion/**`, `dist/**`, or `.next/**` are allowed under `strictIgnoredWrites`, backed up by VFS interception, and explicitly statted during `reconcile()`:
+
+```ts
+const checkpointId = await workspace.snapshot();
+
+workspace.declareToolOutputs({
+  toolName: "vite",
+  checkpointId,
+  outputs: [
+    "node_modules/.cache/vite/deps_metadata.json",
+    { path: "dist/manifest.json", optional: true },
+  ],
+});
+```
+
+Contracts are exact-path only. They do not enable recursive scans of dependency or build-output folders.
 
 Durable attempt journals are enabled by default with `durableAttemptJournals: true`. Each checkpoint writes metadata to `.hyperion/checkpoints/<checkpointId>/journal.json` before the ID is returned. The journal records checkpoint metadata, strategy, Git HEAD, ignored patterns, baseline metadata, and dirty-entry summaries, but never file contents. Git still owns permanent history, merging, commits, and pushes.
 
@@ -126,6 +144,7 @@ The published package is intentionally limited to `dist`, the README/architectur
 - Windows or NTFS: the SDK uses the pure manifest baseline for correctness rather than POSIX-only link assumptions. Small VFS-backed edits are accelerated by the Hot Dirty Buffer before spilling to disk.
 - Ignored paths: `node_modules/**`, `.git/**`, and `.hyperion/**` are ignored by default so dependency and internal state folders are not tracked.
 - Strict ignored writes: set `strictIgnoredWrites: true` to throw `HyperionIgnoredPathError` before in-process VFS writes mutate ignored roots.
+- Tool output contracts: call `declareToolOutputs()` before running package managers, build systems, formatters, or codegen tools that write exact ignored/generated files. Undeclared ignored writes still follow `strictIgnoredWrites`.
 - Durable journal recovery: call `recoverAttempts()` from a new workspace/session to inspect abandoned checkpoint metadata and `canRehydrate` status.
 - Rehydration failures: `rehydrateAttempt()` rejects disposed attempts, corrupt journals, missing backup manifests, missing backup files, cross-workspace journals, and volatile memory-only backups.
 - Patch export: `exportPatch()` supports text regular files and requires backup records for modified/deleted paths. Binary, symlink, and backup-missing exports fail loudly with integrity errors.

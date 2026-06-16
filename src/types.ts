@@ -74,7 +74,7 @@ export interface DirtyEntry {
   after?: StatLedgerEntry;
   renameFrom?: string;
   renameTo?: string;
-  capturedBy: "vfs" | "track" | "reconcile";
+  capturedBy: "vfs" | "track" | "reconcile" | "tool-contract";
   firstSeenAt: number;
   lastSeenAt: number;
 }
@@ -115,4 +115,15 @@ export interface HyperionPromotionResult {
   reconcileResult: ReconcileResult;
   storageCleaned: boolean;
   patch?: string;
+}
+
+export type HyperionToolOutputPath = string | {
+  path: string;
+  optional?: boolean;
+};
+
+export interface HyperionToolOutputContract {
+  toolName: string;
+  outputs: HyperionToolOutputPath[];
+  checkpointId?: CheckpointId;
 }

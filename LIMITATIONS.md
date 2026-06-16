@@ -134,10 +134,13 @@ Implemented foundation:
 - `strictIgnoredWrites: true` throws `HyperionIgnoredPathError` before VFS-captured writes mutate ignored roots.
 - Non-strict VFS ignored writes are recorded internally for diagnostics while preserving current write behavior.
 - Exact ignored paths can be passed to `track()` for future tool-adapter integrations.
+- `declareToolOutputs()` lets integrations declare exact generated or ignored output paths for package managers, build systems, formatters, and codegen tools.
+- Declared outputs bypass strict ignored-write blocking, become VFS backup-aware, and are explicitly statted during reconciliation without scanning the ignored root.
 
 Remaining roadmap direction:
 
-- Add tool mutation contracts for known tools so integrations can declare expected output roots without scanning all ignored content.
+- Persist tool-output contracts in durable journals for abandoned-attempt recovery.
+- Add curated contract helpers for known tools while keeping the primitive exact-path based.
 - Make ignored-write diagnostics visible in `ReconcileResult` or session diagnostics.
 
 Current strict configuration shape:
@@ -150,6 +153,14 @@ const workspace = new HyperionWorkspace({
 });
 
 workspace.track("node_modules/.cache/specific-tool/output.json");
+
+workspace.declareToolOutputs({
+  toolName: "vite",
+  outputs: [
+    "node_modules/.cache/vite/deps_metadata.json",
+    { path: ".next/build-manifest.json", optional: true },
+  ],
+});
 ```
 
 ### Alternatives Considered
