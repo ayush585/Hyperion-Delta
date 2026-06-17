@@ -32,6 +32,10 @@ jobs:
         working-directory: docs
         run: npm install
 
+      - name: Remove broken sitemap (Astro 4 + Starlight 0.28 compat)
+        working-directory: docs
+        run: rm -rf node_modules/@astrojs/sitemap
+
       - name: Build
         working-directory: docs
         run: npm run build
