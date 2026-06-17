@@ -1,0 +1,45 @@
+:root {
+  --sl-color-accent-low: #1b1040;
+  --sl-color-accent: #6c47ff;
+  --sl-color-accent-high: #b8a0ff;
+  --sl-color-text-accent: #9b80ff;
+}
+
+:root[data-theme="light"] {
+  --sl-color-accent-low: #e8e0ff;
+  --sl-color-accent: #5a38e0;
+  --sl-color-accent-high: #3a1fa0;
+  --sl-color-text-accent: #5a38e0;
+  --sl-color-bg: #faf9ff;
+  --sl-color-bg-nav: #f5f3ff;
+  --sl-color-bg-sidebar: #f5f3ff;
+}
+
+:root[data-theme="dark"] {
+  --sl-color-accent-low: #15102a;
+  --sl-color-accent: #7c52ff;
+  --sl-color-accent-high: #c4b0ff;
+  --sl-color-text-accent: #a890ff;
+  --sl-color-bg: #0a0a10;
+  --sl-color-bg-nav: #0e0d18;
+  --sl-color-bg-sidebar: #0e0d18;
+}
+
+.site-title {
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+.sl-markdown-content h1 {
+  font-weight: 800;
+  letter-spacing: -0.04em;
+}
+
+.sl-markdown-content h2 {
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+.sl-markdown-content p code {
+  font-weight: 500;
+}
