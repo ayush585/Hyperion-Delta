@@ -152,6 +152,34 @@ declare module 'astro:content' {
 
 	type ContentEntryMap = {
 		"docs": {
+"architecture/git-companion.md": {
+	id: "architecture/git-companion.md";
+  slug: "architecture/git-companion";
+  body: string;
+  collection: "docs";
+  data: InferEntrySchema<"docs">
+} & { render(): Render[".md"] };
+"architecture/safety.md": {
+	id: "architecture/safety.md";
+  slug: "architecture/safety";
+  body: string;
+  collection: "docs";
+  data: InferEntrySchema<"docs">
+} & { render(): Render[".md"] };
+"architecture/strategies.md": {
+	id: "architecture/strategies.md";
+  slug: "architecture/strategies";
+  body: string;
+  collection: "docs";
+  data: InferEntrySchema<"docs">
+} & { render(): Render[".md"] };
+"architecture/thesis.md": {
+	id: "architecture/thesis.md";
+  slug: "architecture/thesis";
+  body: string;
+  collection: "docs";
+  data: InferEntrySchema<"docs">
+} & { render(): Render[".md"] };
 "guides/concepts.md": {
 	id: "guides/concepts.md";
   slug: "guides/concepts";
