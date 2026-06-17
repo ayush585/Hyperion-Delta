@@ -1,0 +1,227 @@
+[
+  {
+    "config": {
+      "HYPERION_FILE_COUNT": 1000,
+      "HYPERION_DIRTY_COUNT": 1,
+      "HYPERION_ITERATIONS": 20
+    },
+    "runners": [
+      {
+        "label": "Legacy Runner (git reset --hard + git clean -fd)",
+        "totalMs": 13264.5814,
+        "avgMs": 663.22907,
+        "samples": 20,
+        "speedup": 1,
+        "reduction": 0,
+        "skipped": false
+      },
+      {
+        "label": "Targeted Reversion (manifest file restore)",
+        "totalMs": 86.4993,
+        "avgMs": 4.324965,
+        "samples": 20,
+        "speedup": 153.35,
+        "reduction": 99.35,
+        "skipped": false
+      },
+      {
+        "label": "Targeted Reversion (rsync file-list/link-dest)",
+        "totalMs": 0,
+        "avgMs": 0,
+        "samples": 0,
+        "speedup": 0,
+        "reduction": 0,
+        "skipped": true
+      },
+      {
+        "label": "Targeted Reversion (tmpfs manifest restore)",
+        "totalMs": 0,
+        "avgMs": 0,
+        "samples": 0,
+        "speedup": 0,
+        "reduction": 0,
+        "skipped": true
+      }
+    ]
+  },
+  {
+    "config": {
+      "HYPERION_FILE_COUNT": 1000,
+      "HYPERION_DIRTY_COUNT": 5,
+      "HYPERION_ITERATIONS": 15
+    },
+    "runners": [
+      {
+        "label": "Legacy Runner (git reset --hard + git clean -fd)",
+        "totalMs": 8803.6514,
+        "avgMs": 586.910093,
+        "samples": 15,
+        "speedup": 1,
+        "reduction": 0,
+        "skipped": false
+      },
+      {
+        "label": "Targeted Reversion (manifest file restore)",
+        "totalMs": 117.4426,
+        "avgMs": 7.829506,
+        "samples": 15,
+        "speedup": 74.96,
+        "reduction": 98.67,
+        "skipped": false
+      },
+      {
+        "label": "Targeted Reversion (rsync file-list/link-dest)",
+        "totalMs": 0,
+        "avgMs": 0,
+        "samples": 0,
+        "speedup": 0,
+        "reduction": 0,
+        "skipped": true
+      },
+      {
+        "label": "Targeted Reversion (tmpfs manifest restore)",
+        "totalMs": 0,
+        "avgMs": 0,
+        "samples": 0,
+        "speedup": 0,
+        "reduction": 0,
+        "skipped": true
+      }
+    ]
+  },
+  {
+    "config": {
+      "HYPERION_FILE_COUNT": 1000,
+      "HYPERION_DIRTY_COUNT": 10,
+      "HYPERION_ITERATIONS": 15
+    },
+    "runners": [
+      {
+        "label": "Legacy Runner (git reset --hard + git clean -fd)",
+        "totalMs": 9858.5887,
+        "avgMs": 657.239246,
+        "samples": 15,
+        "speedup": 1,
+        "reduction": 0,
+        "skipped": false
+      },
+      {
+        "label": "Targeted Reversion (manifest file restore)",
+        "totalMs": 299.885,
+        "avgMs": 19.992333,
+        "samples": 15,
+        "speedup": 32.87,
+        "reduction": 96.96,
+        "skipped": false
+      },
+      {
+        "label": "Targeted Reversion (rsync file-list/link-dest)",
+        "totalMs": 0,
+        "avgMs": 0,
+        "samples": 0,
+        "speedup": 0,
+        "reduction": 0,
+        "skipped": true
+      },
+      {
+        "label": "Targeted Reversion (tmpfs manifest restore)",
+        "totalMs": 0,
+        "avgMs": 0,
+        "samples": 0,
+        "speedup": 0,
+        "reduction": 0,
+        "skipped": true
+      }
+    ]
+  },
+  {
+    "config": {
+      "HYPERION_FILE_COUNT": 1000,
+      "HYPERION_DIRTY_COUNT": 50,
+      "HYPERION_ITERATIONS": 10
+    },
+    "runners": [
+      {
+        "label": "Legacy Runner (git reset --hard + git clean -fd)",
+        "totalMs": 7843.7266,
+        "avgMs": 784.37266,
+        "samples": 10,
+        "speedup": 1,
+        "reduction": 0,
+        "skipped": false
+      },
+      {
+        "label": "Targeted Reversion (manifest file restore)",
+        "totalMs": 1718.7958,
+        "avgMs": 171.87958,
+        "samples": 10,
+        "speedup": 4.56,
+        "reduction": 78.09,
+        "skipped": false
+      },
+      {
+        "label": "Targeted Reversion (rsync file-list/link-dest)",
+        "totalMs": 0,
+        "avgMs": 0,
+        "samples": 0,
+        "speedup": 0,
+        "reduction": 0,
+        "skipped": true
+      },
+      {
+        "label": "Targeted Reversion (tmpfs manifest restore)",
+        "totalMs": 0,
+        "avgMs": 0,
+        "samples": 0,
+        "speedup": 0,
+        "reduction": 0,
+        "skipped": true
+      }
+    ]
+  },
+  {
+    "config": {
+      "HYPERION_FILE_COUNT": 1000,
+      "HYPERION_DIRTY_COUNT": 100,
+      "HYPERION_ITERATIONS": 5
+    },
+    "runners": [
+      {
+        "label": "Legacy Runner (git reset --hard + git clean -fd)",
+        "totalMs": 4270.7912,
+        "avgMs": 854.15824,
+        "samples": 5,
+        "speedup": 1,
+        "reduction": 0,
+        "skipped": false
+      },
+      {
+        "label": "Targeted Reversion (manifest file restore)",
+        "totalMs": 1494.5398,
+        "avgMs": 298.90796,
+        "samples": 5,
+        "speedup": 2.86,
+        "reduction": 65.01,
+        "skipped": false
+      },
+      {
+        "label": "Targeted Reversion (rsync file-list/link-dest)",
+        "totalMs": 0,
+        "avgMs": 0,
+        "samples": 0,
+        "speedup": 0,
+        "reduction": 0,
+        "skipped": true
+      },
+      {
+        "label": "Targeted Reversion (tmpfs manifest restore)",
+        "totalMs": 0,
+        "avgMs": 0,
+        "samples": 0,
+        "speedup": 0,
+        "reduction": 0,
+        "skipped": true
+      }
+    ]
+  }
+]
