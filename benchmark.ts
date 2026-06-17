@@ -600,6 +600,7 @@ function printResults(runners: RunnerStats[]): void {
 
 const SEARCH_CHECKPOINTS = readPositiveIntegerEnv("HYPERION_SEARCH_CHECKPOINTS", 5);
 const AGENT_SEARCH_MODE = process.env.HYPERION_MODE === "agent-search";
+const SKIP_LEGACY = process.env.HYPERION_SKIP_LEGACY === "true";
 
 function runAgentSearchRunner(): RunnerStats {
   const searchBase = join(WORK_ROOT_DIR, ".hyperion_agent_search_git");
@@ -669,12 +670,14 @@ function main(): void {
     printRunnerComplete(search);
     printResults([search]);
   } else {
-  const gitInitNs = initializeGitRepository();
-  status(`Git baseline complete in ${formatMs(gitInitNs)}`);
+    if (!SKIP_LEGACY) {
+      const gitInitNs = initializeGitRepository();
+      status(`Git baseline complete in ${formatMs(gitInitNs)}`);
 
-  status("\nPhase 2: Running Legacy Runner control group...");
-  const legacy = runLegacyRunner();
-  printRunnerComplete(legacy);
+      status("\nPhase 2: Running Legacy Runner control group...");
+      const legacy = runLegacyRunner();
+      printRunnerComplete(legacy);
+    }
 
   status("\nPhase 3: Running optimized targeted reversion runners...");
   const manifest = runManifestTargetedRunner();
@@ -686,7 +689,7 @@ function main(): void {
   const tmpfs = runTmpfsTargetedRunner();
   printRunnerComplete(tmpfs);
 
-  printResults([legacy, manifest, rsync, tmpfs]);
+  const runners: RunnerStats[] = SKIP_LEGACY ? [manifest, rsync, tmpfs] : [runLegacyRunner() ? null as any : null as any, manifest, rsync, tmpfs];
 
   if (!OUTPUT_JSON) {
     console.log("\nMetadata lesson: full directory clone/delete was intentionally removed from Phase 3.");

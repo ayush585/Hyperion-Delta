@@ -2,6 +2,34 @@
 
 All notable release changes for `hyperion-delta` are documented here.
 
+## 0.1.5 - 2026-06-17
+
+### Benchmark Sweep Framework
+
+- Added `HYPERION_CONFIG` support: pass a JSON config file to override benchmark parameters.
+- Added `HYPERION_DIRTY_COUNT`: vary how many files an agent mutates per rollback cycle.
+- Added `HYPERION_OUTPUT=json`: machine-readable benchmark output.
+- Added `scripts/sweep-runner.mjs`: orchestrates multi-config benchmark sweeps with JSON + Markdown output.
+- Added `scripts/win-bench.mjs`: Windows-native benchmark (no Git dependency) for large-scale NTFS testing.
+- Added `HYPERION_MODE=agent-search` and `runAgentSearchRunner()` for MCTS-style stress testing.
+- Added `HYPERION_SKIP_LEGACY=true` to run targeted reversion runners without the Git baseline.
+
+### Sweep Evidence
+
+- **Dirty-set sweep** (1,000 files, Windows NTFS): 1 dirty file = 4.325ms, 100 dirty files = 298.908ms. Manifest restore scales linearly (153x→2.9x vs Git).
+- **Repo-size sweep** (1K→5K files, Windows NTFS): Manifest restore stays flat at 13-21ms. Git reset balloons from 579ms to 1,887ms (3.3x).
+- **Agent-search stress test** (500 files, Windows NTFS): 5 branches × 3 files = 67.8ms. 10 branches × 10 files = 147.3ms. MCTS viable in sub-150ms.
+- **Windows-native** (10,000 files, Windows NTFS): 10 dirty files = 62ms avg rollback. 9.2x faster than Git on the same machine. No Git operations on the hot path.
+
+### Docs
+
+- Added sweep results to benchmark section (`/benchmark/results/`).
+- Added Windows performance page (`/benchmark/windows/`) with methodology and comparison.
+- Docs site now has 18 indexed pages with 1,515 search words across all sections.
+- Fixed sitemap crash by pinning `@astrojs/sitemap@3.6.0` for Starlight 0.28 compatibility.
+- Fixed docs deploy workflow: `npm install` for cross-platform compat, `github-pages` environment.
+- Added OG social preview image, docs badge in repo README, Starlight credits in footer.
+
 ## 0.1.0 - 2026-06-17
 
 Initial public release candidate for Hyperion Delta, a zero-runtime-dependency Node.js/TypeScript SDK for dirty-set-scale local agent rollback.
