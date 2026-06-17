@@ -215,6 +215,13 @@ declare module 'astro:content' {
   collection: "docs";
   data: InferEntrySchema<"docs">
 } & { render(): Render[".md"] };
+"benchmark/windows.md": {
+	id: "benchmark/windows.md";
+  slug: "benchmark/windows";
+  body: string;
+  collection: "docs";
+  data: InferEntrySchema<"docs">
+} & { render(): Render[".md"] };
 "guides/concepts.md": {
 	id: "guides/concepts.md";
   slug: "guides/concepts";

@@ -53,6 +53,7 @@ export default defineConfig({
           label: "Benchmark",
           items: [
             { label: "Results", link: "/benchmark/results/" },
+            { label: "Windows", link: "/benchmark/windows/" },
             { label: "Reproduce", link: "/benchmark/reproduce/" },
           ],
         },
