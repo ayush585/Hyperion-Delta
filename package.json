@@ -1,7 +1,8 @@
 {
-  "name": "@prettiflow/hyperion-delta",
+  "name": "hyperion-delta",
   "version": "0.1.0",
   "description": "Zero-config local agent state management for dirty-set-scale rollback.",
+  "license": "MIT",
   "type": "module",
   "keywords": [
     "agent",
@@ -35,7 +36,8 @@
     "README.md",
     "ARCHITECTURE.md",
     "LIMITATIONS.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "publishConfig": {
     "access": "public"

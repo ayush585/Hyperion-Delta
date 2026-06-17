@@ -38,10 +38,10 @@ For Prettiflow-style local MCTS or repair loops, that means an agent can test fa
 
 ## SDK Quickstart
 
-The production SDK surface is exposed as `@prettiflow/hyperion-delta`. Prettiflow-style agent loops can use the adapter wrapper with only the checkpoint lifecycle in their execution path:
+The production SDK surface is exposed as `hyperion-delta`. Prettiflow-style agent loops can use the adapter wrapper with only the checkpoint lifecycle in their execution path:
 
 ```ts
-import { HyperionAgentSession } from "@prettiflow/hyperion-delta";
+import { HyperionAgentSession } from "hyperion-delta";
 
 const session = new HyperionAgentSession(process.cwd());
 
@@ -160,7 +160,7 @@ npm run package:smoke
 
 The published package is intentionally limited to `dist`, the README/architecture docs, the benchmark hero image used by the README, and required npm metadata. Benchmark commands are repository-checkout utilities and are not part of the SDK runtime surface.
 
-Publishing is prepared through GitHub Actions trusted publishing with npm provenance. Before the first public publish, a maintainer must configure npm trusted publishing for `@prettiflow/hyperion-delta` with repository `ayush585/Hyperion-Delta`, workflow `.github/workflows/publish.yml`, and environment `npm-publish`. This repo does not store npm tokens.
+Publishing is prepared through GitHub Actions trusted publishing with npm provenance. Before the first public publish, a maintainer must configure npm trusted publishing for `hyperion-delta` with repository `ayush585/Hyperion-Delta`, workflow `.github/workflows/publish.yml`, and environment `npm-publish`. This repo does not store npm tokens.
 
 ## Troubleshooting
 

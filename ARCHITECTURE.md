@@ -1,6 +1,6 @@
 # Hyperion Delta Production SDK Architecture
 
-Enterprise-grade, zero-config local agent state management for `@prettiflow/hyperion-delta`.
+Enterprise-grade, zero-config local agent state management for `hyperion-delta`.
 
 ## 1. Executive Thesis
 
@@ -31,7 +31,7 @@ Hyperion Delta is a Node.js/TypeScript SDK for local agent execution loops. It i
 The SDK is packaged as:
 
 ```ts
-import { HyperionWorkspace } from "@prettiflow/hyperion-delta";
+import { HyperionWorkspace } from "hyperion-delta";
 ```
 
 The target integration has zero operational knobs for the agent engineer:
@@ -636,7 +636,7 @@ Each checkpoint has isolated namespace and manifest state. Path-level rollback l
 
 ### Phase 1: MVP SDK
 
-- Package scaffold for `@prettiflow/hyperion-delta`.
+- Package scaffold for `hyperion-delta`.
 - `HyperionWorkspace` public API.
 - Hybrid Git/stat baseline.
 - Pure Node manifest strategy.

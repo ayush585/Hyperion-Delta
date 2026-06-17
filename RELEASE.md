@@ -13,7 +13,7 @@ Hyperion Delta is prepared for npm trusted publishing with provenance, but this 
 
 ## Trusted Publishing Setup
 
-Configure npm trusted publishing for `@prettiflow/hyperion-delta` before the first publish:
+Configure npm trusted publishing for `hyperion-delta` before the first publish:
 
 - Publisher: GitHub Actions.
 - Repository: `ayush585/Hyperion-Delta`.
@@ -25,8 +25,8 @@ The workflow uses OIDC with `id-token: write` and `contents: read`. Do not add n
 
 ## Publishing Flow
 
-1. Confirm the npm `@prettiflow` scope exists and your account can publish `@prettiflow/hyperion-delta`.
-2. Confirm the license decision before public release. MIT is recommended for a broadly adopted open-source SDK, but this repository intentionally does not add a license file until the owner chooses one.
+1. Confirm your npm account can publish `hyperion-delta`.
+2. License: MIT. See [LICENSE](./LICENSE).
 3. Create a GitHub release for the version or manually dispatch the `Publish Package` workflow.
 4. Let CI run `npm run release:final`.
 5. The workflow publishes with `npm publish --provenance --access public`.
@@ -34,7 +34,7 @@ The workflow uses OIDC with `id-token: write` and `contents: read`. Do not add n
 
 ## Current Release Target
 
-- Package: `@prettiflow/hyperion-delta`
+- Package: `hyperion-delta`
 - Version: `0.1.0`
 - Runtime: Node.js 20+
 - Runtime dependencies: none

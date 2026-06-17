@@ -37,7 +37,7 @@ try {
   writeFileSync(
     smokeScript,
     [
-      "import { HyperionWorkspace, HyperionAgentSession } from '@prettiflow/hyperion-delta';",
+      "import { HyperionWorkspace, HyperionAgentSession } from 'hyperion-delta';",
       `const workspaceRoot = ${JSON.stringify(workspaceRoot)};`,
       "const workspace = new HyperionWorkspace({ workspaceRoot, useTmpfs: false });",
       "const checkpointId = await workspace.snapshot();",

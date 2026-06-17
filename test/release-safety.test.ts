@@ -16,6 +16,7 @@ describe("release safety", () => {
       "ARCHITECTURE.md",
       "LIMITATIONS.md",
       "CHANGELOG.md",
+      "LICENSE",
     ]);
     assert.equal(packageJson.dependencies, undefined);
     assert.equal(packageJson.type, "module");
