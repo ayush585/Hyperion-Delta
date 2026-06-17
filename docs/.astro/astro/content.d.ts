@@ -152,6 +152,27 @@ declare module 'astro:content' {
 
 	type ContentEntryMap = {
 		"docs": {
+"api/agent-session.md": {
+	id: "api/agent-session.md";
+  slug: "api/agent-session";
+  body: string;
+  collection: "docs";
+  data: InferEntrySchema<"docs">
+} & { render(): Render[".md"] };
+"api/types.md": {
+	id: "api/types.md";
+  slug: "api/types";
+  body: string;
+  collection: "docs";
+  data: InferEntrySchema<"docs">
+} & { render(): Render[".md"] };
+"api/workspace.md": {
+	id: "api/workspace.md";
+  slug: "api/workspace";
+  body: string;
+  collection: "docs";
+  data: InferEntrySchema<"docs">
+} & { render(): Render[".md"] };
 "architecture/git-companion.md": {
 	id: "architecture/git-companion.md";
   slug: "architecture/git-companion";
