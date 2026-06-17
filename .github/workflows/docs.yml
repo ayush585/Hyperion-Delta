@@ -27,12 +27,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
-          cache-dependency-path: docs/package-lock.json
 
       - name: Install
         working-directory: docs
-        run: npm ci
+        run: npm install
 
       - name: Build
         working-directory: docs
