@@ -71,7 +71,7 @@ describe("release safety", () => {
     assert.match(workflow, /node-version: 20/);
     assert.match(workflow, /run: npm ci/);
     assert.match(workflow, /run: npm run release:final/);
-    assert.match(workflow, /run: npm publish --provenance --access public/);
+    assert.match(workflow, /run: npm publish --provenance/);
     assert.doesNotMatch(workflow, /NODE_AUTH_TOKEN/);
     assert.doesNotMatch(workflow, /NPM_TOKEN/);
   });
