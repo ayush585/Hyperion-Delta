@@ -1,0 +1,44 @@
+---
+title: Hyperion Delta
+description:
+  Zero-config local agent state management for dirty-set-scale rollback.
+---
+
+import Hero from "../../components/Hero.astro";
+import { Card, CardGrid, Icon } from "@astrojs/starlight/components";
+
+<Hero />
+
+## Why Hyperion
+
+<CardGrid>
+
+<Card title="Dirty-Set Rollback">
+  <Icon name="rocket" slot="icon" />
+  Scales with what your agent changed, not your entire repository.
+  Git reset inspects the whole working tree. Hyperion only touches
+  the files in the dirty set — roll back in microseconds.
+</Card>
+
+<Card title="Zero-Config VFS Interception">
+  <Icon name="seti:typescript" slot="icon" />
+  Installs a single hook. Every <code>writeFile</code>,
+  <code>rename</code>, <code>unlink</code>, and stream mutation is
+  automatically tracked. No decorators, no manual bookkeeping.
+</Card>
+
+<Card title="Multi-Tier Storage">
+  <Icon name="lucide:layers" slot="icon" />
+  tmpfs dirty-set on Linux, POSIX hard links on macOS, NTFS links on
+  Windows, pure manifest everywhere. Auto-selects the fastest safe
+  strategy for your platform.
+</Card>
+
+<Card title="Safety Guarantees">
+  <Icon name="lucide:shield-check" slot="icon" />
+  Reconcile firewall catches native-tool writes before rollback.
+  Atomic restore via temp-file rename. Loud integrity errors —
+  never silent corruption.
+</Card>
+
+</CardGrid>

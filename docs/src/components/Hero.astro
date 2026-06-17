@@ -1,0 +1,180 @@
+---
+---
+
+<div class="hero">
+  <h1 class="headline">Rollback that scales with what you changed.</h1>
+  <p class="tagline">
+    Local agents edit files, run tests, fail, and backtrack. Hyperion makes
+    undoing mistakes <strong>55,000x faster than Git</strong> by restoring only the
+    files your agent touched — not your entire repository.
+  </p>
+  <div class="install-block">
+    <code>npm install hyperion-delta</code>
+  </div>
+  <div class="demo-block">
+    <pre><code class="demo-code">const <span>session</span> = <span>new</span> <span>HyperionAgentSession</span>(<span>process</span>.cwd());
+const <span>attempt</span> = <span>await</span> <span>session</span>.<span>runAttempt</span>(<span>async</span> (<span>{'{'}</span><span>exec</span><span>{'}'}</span>) => <span>{'{'}</span>
+  <span>await</span> <span>exec</span>(<span>"npm"</span>, [<span>"test"</span>]);
+<span>{'}'}</span>);
+<span>await</span> <span>session</span>.<span>promote</span>(<span>attempt</span>.checkpointId);
+<span>await</span> <span>session</span>.<span>dispose</span>();</code></pre>
+  </div>
+  <div class="cta-row">
+    <a href="/Hyperion-Delta/guides/getting-started/" class="btn-primary">Get Started</a>
+    <a
+      href="https://github.com/ayush585/Hyperion-Delta"
+      class="btn-secondary"
+      target="_blank"
+      rel="noopener noreferrer"
+    >
+      View on GitHub
+    </a>
+  </div>
+</div>
+
+<style>
+  .hero {
+    border-radius: 12px;
+    background: linear-gradient(135deg, #15102a 0%, #0a0a10 60%, #1b1040 100%);
+    padding: 3rem 2.5rem;
+    margin: 1rem 0 2rem;
+    border: 1px solid rgba(108, 71, 255, 0.15);
+  }
+
+  .headline {
+    font-size: 2.5rem;
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    line-height: 1.15;
+    margin: 0 0 1rem;
+    background: linear-gradient(135deg, #ffffff 0%, #b8a0ff 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .tagline {
+    font-size: 1.1rem;
+    line-height: 1.65;
+    color: var(--sl-color-gray-2);
+    margin: 0 0 1.75rem;
+    max-width: 600px;
+  }
+
+  .tagline strong {
+    color: var(--sl-color-text-accent);
+  }
+
+  .install-block {
+    margin: 0 0 1rem;
+  }
+
+  .install-block code {
+    font-size: 0.95rem;
+    padding: 0.55rem 1rem;
+    border-radius: 6px;
+    background: rgba(108, 71, 255, 0.12);
+    border: 1px solid rgba(108, 71, 255, 0.25);
+    color: #b8a0ff;
+  }
+
+  .demo-block {
+    margin: 0 0 1.75rem;
+  }
+
+  .demo-block pre {
+    margin: 0;
+    padding: 1rem 1.25rem;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    overflow-x: auto;
+  }
+
+  .demo-block code {
+    font-size: 0.85rem;
+    line-height: 1.7;
+    color: #d4d4d8;
+  }
+
+  .demo-block code span {
+    color: #a890ff;
+  }
+
+  .cta-row {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .btn-primary,
+  .btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.6rem 1.25rem;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-decoration: none;
+    transition: background 0.2s, transform 0.15s;
+  }
+
+  .btn-primary {
+    background: #6c47ff;
+    color: #ffffff;
+  }
+
+  .btn-primary:hover {
+    background: #7c52ff;
+    transform: translateY(-1px);
+  }
+
+  .btn-secondary {
+    background: rgba(255, 255, 255, 0.06);
+    color: #d4d4d8;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.1);
+    transform: translateY(-1px);
+  }
+
+  :global([data-theme="light"]) .hero {
+    background: linear-gradient(135deg, #f5f3ff 0%, #faf9ff 60%, #e8e0ff 100%);
+    border-color: rgba(108, 71, 255, 0.15);
+  }
+
+  :global([data-theme="light"]) .headline {
+    background: linear-gradient(135deg, #1a1a2e 0%, #5a38e0 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+  }
+
+  :global([data-theme="light"]) .tagline {
+    color: #52526b;
+  }
+
+  :global([data-theme="light"]) .demo-block pre {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.08);
+  }
+
+  :global([data-theme="light"]) .demo-block code {
+    color: #38385f;
+  }
+
+  :global([data-theme="light"]) .demo-block code span {
+    color: #5a38e0;
+  }
+
+  :global([data-theme="light"]) .btn-secondary {
+    background: rgba(0, 0, 0, 0.04);
+    color: #38385f;
+    border-color: rgba(0, 0, 0, 0.1);
+  }
+
+  :global([data-theme="light"]) .btn-secondary:hover {
+    background: rgba(0, 0, 0, 0.08);
+  }
+</style>
