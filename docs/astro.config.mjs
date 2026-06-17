@@ -13,6 +13,7 @@ export default defineConfig({
       social: {
         github: "https://github.com/ayush585/Hyperion-Delta",
       },
+      credits: true,
       sidebar: [
         { label: "Home", link: "/" },
         {

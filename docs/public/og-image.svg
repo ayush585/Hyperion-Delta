@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0a0a10"/>
+      <stop offset="50%" style="stop-color:#15102a"/>
+      <stop offset="100%" style="stop-color:#1b1040"/>
+    </linearGradient>
+    <linearGradient id="text" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#ffffff"/>
+      <stop offset="100%" style="stop-color:#b8a0ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect x="60" y="60" width="1080" height="510" rx="24" fill="none" stroke="rgba(108,71,255,0.15)" stroke-width="2"/>
+  <path d="M600 160L680 380H520L600 160Z" fill="#7c52ff" opacity="0.8"/>
+  <text x="600" y="460" text-anchor="middle" font-family="system-ui,sans-serif" font-size="64" font-weight="800" fill="url(#text)" letter-spacing="-2">Hyperion Delta</text>
+  <text x="600" y="520" text-anchor="middle" font-family="system-ui,sans-serif" font-size="28" fill="#a890ff" letter-spacing="-0.5">Rollback that scales with what you changed — 55,000x faster than Git</text>
+</svg>

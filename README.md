@@ -1,5 +1,7 @@
 # Hyperion Delta-Bench
 
+[![Documentation](https://img.shields.io/badge/docs-hyperion--delta-6c47ff?style=flat)](https://ayush585.github.io/Hyperion-Delta/)
+
 Hyperion Delta-Bench proves a simple systems result for local AI agents: rollback should scale with the files the agent changed, not with the size of the whole repository.
 
 In the final audit run, Git reset took `3,478.407 ms` per rollback. Hyperion's targeted manifest restore took `0.971 ms`. The tmpfs dirty-set path took `0.063 ms`, a `54,851.92x` speedup over Git.
