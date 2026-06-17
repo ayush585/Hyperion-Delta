@@ -9,8 +9,12 @@
     "preview": "astro preview"
   },
   "dependencies": {
+    "@astrojs/sitemap": "3.6.0",
     "@astrojs/starlight": "^0.28.0",
     "astro": "^4.16.0",
     "shiki": "^1.29.2"
+  },
+  "overrides": {
+    "@astrojs/sitemap": "3.6.0"
   }
 }
