@@ -1,0 +1,34 @@
+# Hyperion Delta
+
+> Zero-config local agent state management for dirty-set-scale rollback. Rollback that scales with what your agent changed — 55,000x faster than Git on Linux, 9-150x faster on Windows NTFS. Built for AI coding agents running MCTS-style repair loops.
+
+## Getting Started
+
+- [Quickstart](https://ayush585.github.io/Hyperion-Delta/guides/getting-started/): Install hyperion-delta, create a session, run attempts with automatic checkpoint + reconcile + rollback, promote successful attempts, dispose.
+- [Core Concepts](https://ayush585.github.io/Hyperion-Delta/guides/concepts/): Checkpoint snapshot lifecycle, reconcile firewall for child-process writes, atomic rollback via temp-file rename, promotion without Git, VFS interception of sync/callback/promise/stream APIs.
+
+## Architecture
+
+- [Thesis](https://ayush585.github.io/Hyperion-Delta/architecture/thesis/): Why rollback must scale with dirty set, not repository size. 55,000x benchmark evidence from 50K-file workspace audit. Metadata bottleneck lesson from full-tree clone/delete failure. Product boundary: Hyperion is not Git.
+- [Strategy Tiers](https://ayush585.github.io/Hyperion-Delta/architecture/strategies/): tmpfs RAM-backed (Tier 1, Linux/WSL2), POSIX hard links (Tier 2, macOS/Linux), NTFS hard links (Windows), Hot Dirty Buffer (all platforms, in-memory before disk spill), Pure Manifest (Tier 3, universal baseline). Auto-selection logic and fallback behavior.
+- [Safety Model](https://ayush585.github.io/Hyperion-Delta/architecture/safety/): Reconcile firewall (mandatory before rollback, catches native-tool writes), atomic restore (temp file + rename), ghost directory cleanup, integrity errors (fail loudly on missing backups), strict ignored-write policy, tool output contracts via declareToolOutputs().
+- [Git Companion](https://ayush585.github.io/Hyperion-Delta/architecture/git-companion/): Three-layer model (Git owns history, Hyperion owns attempt isolation, agent framework owns planning). Durable attempt journals, patch export via exportPatch(), promotion without Git, recovery rehydration from journal metadata.
+
+## API Reference
+
+- [HyperionWorkspace](https://ayush585.github.io/Hyperion-Delta/api/workspace/): Low-level API: snapshot(), reconcile(), rollback(), promote(), dispose(), track(), declareToolOutputs(), getDiagnostics(), recoverAttempts(), rehydrateAttempt(), exportPatch(), installFsInterceptor(), uninstallFsInterceptor(). Constructor accepts string path or full HyperionConfig.
+- [Agent Session](https://ayush585.github.io/Hyperion-Delta/api/agent-session/): High-level wrapper with autopilot runAttempt(callback, options). exec() helper runs explicit executable + args array with shell:false. Context exec() reconciles after child-process completion. Session-specific errors: HyperionExecError, HyperionAttemptRollbackError.
+- [Types and Errors](https://ayush585.github.io/Hyperion-Delta/api/types/): Complete type reference: HyperionConfig (14 fields with defaults), StorageStrategyKind, ReconcileResult, CheckpointId. Error hierarchy: HyperionError → HyperionCapacityError, HyperionIntegrityError, HyperionPathError → HyperionIgnoredPathError, HyperionRollbackError. Tool contracts, diagnostics, recovery types.
+
+## Guides
+
+- [Limitations](https://ayush585.github.io/Hyperion-Delta/guides/limitations/): Four known limitations with decided mitigations. No permanent history/merging (Git companion bridges this). Platform disparity (Hot Dirty Buffer + Windows link discovery). Ignored files blindspot (strict mode + tool contracts). Agent lifecycle complexity (autopilot runner).
+- [Security](https://ayush585.github.io/Hyperion-Delta/guides/security/): Zero runtime dependencies. No arbitrary shell execution. exec() uses spawn with shell:false. Fixed internal probes only (git, rsync, fsutil). Path normalization before I/O. Mandatory reconcile before rollback. Missing backups fail loudly.
+- [Troubleshooting](https://ayush585.github.io/Hyperion-Delta/guides/troubleshooting/): 14 common issues. Git unavailable (stat-only fallback), tmpfs unavailable (pure manifest degrade), Windows NTFS (hard-link discovery), strict ignored writes (declareToolOutputs), durable journal recovery (recoverAttempts, canRehydrate), rehydration failures (volatile memory-only blockers), patch export (text files only), missing backup records (integrity error).
+- [Release and Publishing](https://ayush585.github.io/Hyperion-Delta/guides/release/): Local pre-publish gate (npm run release:final), GitHub Actions CI with npm provenance via NPM_TOKEN secret in npm-publish environment. Tag, push, create GitHub Release — CI runs checks and publishes.
+
+## Benchmark Evidence
+
+- [Results](https://ayush585.github.io/Hyperion-Delta/benchmark/results/): Original WSL2 audit (55,000x tmpfs, 3,580x manifest). Sweep data: dirty-set scaling (1→100 files: 4→299ms, 153x→2.9x vs Git), repo-size independence (1K→5K: manifest flat at 15ms, Git 3.3x growth to 1,887ms), agent-search stress (5-10 MCTS branches: 45-147ms per cycle).
+- [Windows Performance](https://ayush585.github.io/Hyperion-Delta/benchmark/windows/): NTFS-only benchmark. 10,000-file repo, 10 dirty files, 62ms average rollback — 9.2x faster than Git. No tmpfs, no Linux, no Git on the hot path. Pure Node.js filesystem operations.
+- [Reproduce](https://ayush585.github.io/Hyperion-Delta/benchmark/reproduce/): How to run benchmarks locally. Smoke test (npm run benchmark:smoke), full audit (npm run benchmark), environment overrides (HYPERION_FILE_COUNT, HYPERION_ITERATIONS), WSL2 staging notes, sweep runner usage (node scripts/sweep-runner.mjs config.json).
