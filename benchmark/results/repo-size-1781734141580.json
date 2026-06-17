@@ -1,0 +1,92 @@
+[
+  {
+    "config": {
+      "HYPERION_FILE_COUNT": 1000,
+      "HYPERION_DIRTY_COUNT": 10,
+      "HYPERION_ITERATIONS": 8
+    },
+    "runners": [
+      {
+        "label": "Legacy Runner (git reset --hard + git clean -fd)",
+        "totalMs": 4633.8503,
+        "avgMs": 579.231287,
+        "samples": 8,
+        "speedup": 1,
+        "reduction": 0,
+        "skipped": false
+      },
+      {
+        "label": "Targeted Reversion (manifest file restore)",
+        "totalMs": 170.6045,
+        "avgMs": 21.325562,
+        "samples": 8,
+        "speedup": 27.16,
+        "reduction": 96.32,
+        "skipped": false
+      },
+      {
+        "label": "Targeted Reversion (rsync file-list/link-dest)",
+        "totalMs": 0,
+        "avgMs": 0,
+        "samples": 0,
+        "speedup": 0,
+        "reduction": 0,
+        "skipped": true
+      },
+      {
+        "label": "Targeted Reversion (tmpfs manifest restore)",
+        "totalMs": 0,
+        "avgMs": 0,
+        "samples": 0,
+        "speedup": 0,
+        "reduction": 0,
+        "skipped": true
+      }
+    ]
+  },
+  {
+    "config": {
+      "HYPERION_FILE_COUNT": 5000,
+      "HYPERION_DIRTY_COUNT": 10,
+      "HYPERION_ITERATIONS": 5
+    },
+    "runners": [
+      {
+        "label": "Legacy Runner (git reset --hard + git clean -fd)",
+        "totalMs": 9437.3505,
+        "avgMs": 1887.4701,
+        "samples": 5,
+        "speedup": 1,
+        "reduction": 0,
+        "skipped": false
+      },
+      {
+        "label": "Targeted Reversion (manifest file restore)",
+        "totalMs": 67.0505,
+        "avgMs": 13.4101,
+        "samples": 5,
+        "speedup": 140.75,
+        "reduction": 99.29,
+        "skipped": false
+      },
+      {
+        "label": "Targeted Reversion (rsync file-list/link-dest)",
+        "totalMs": 0,
+        "avgMs": 0,
+        "samples": 0,
+        "speedup": 0,
+        "reduction": 0,
+        "skipped": true
+      },
+      {
+        "label": "Targeted Reversion (tmpfs manifest restore)",
+        "totalMs": 0,
+        "avgMs": 0,
+        "samples": 0,
+        "speedup": 0,
+        "reduction": 0,
+        "skipped": true
+      }
+    ]
+  }
+]
