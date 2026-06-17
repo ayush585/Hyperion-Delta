@@ -40,4 +40,4 @@ jobs:
         run: npm run release:final
 
       - name: Publish with provenance
-        run: npm publish --provenance --access public
+        run: npm publish --provenance
