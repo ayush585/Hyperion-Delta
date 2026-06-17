@@ -103,10 +103,13 @@ for (let i = 0; i < total; i++) {
     }
 
     const manifestRunner = findRunner(parsed.runners, "manifest");
+    const searchRunner = findRunner(parsed.runners, "agent");
     const avgLabel =
       manifestRunner && !manifestRunner.skipped
         ? `${manifestRunner.avgMs.toFixed(3)}ms avg`
-        : "skipped";
+        : searchRunner && !searchRunner.skipped
+          ? `${searchRunner.avgMs.toFixed(3)}ms avg`
+          : "skipped";
     console.error(
       `[${i + 1}/${total}] dirty-count=${dirtyCount} files=${fileCount} iters=${iterations} ... done (${avgLabel})`,
     );
@@ -150,29 +153,48 @@ function writeResultFiles(repoRoot, sweepName, timestamp, results) {
       .replace(/[-_]+/g, " ")
       .replace(/\b\w/g, (ch) => ch.toUpperCase()) + " Sweep Results";
 
+  const isAgentSearch = results[0]?.config?.HYPERION_MODE === "agent-search";
+
   let md = `# ${title}\n`;
   md += `**Date:** ${date}\n`;
   md += `**Platform:** ${platform}\n`;
   md += `**Repo files:** ${repoFiles}\n\n`;
-  md += "| Dirty Files | Git (ms) | Manifest (ms) | rsync (ms) | tmpfs (ms) | Manifest Speedup |\n";
-  md += "|---|---|---|---|---|---|\n";
 
-  for (const result of results) {
-    const dirty = result.config?.HYPERION_DIRTY_COUNT ?? "?";
-    const runners = result.data?.runners ?? [];
+  if (isAgentSearch) {
+    md += "| Branches | Files/Branch | Total Iterations | Avg Latency (ms) | Total (ms) |\n";
+    md += "|---|---|---|---|---|\n";
+    for (const result of results) {
+      const branches = result.config?.HYPERION_SEARCH_CHECKPOINTS ?? "?";
+      const perBranch = result.config?.HYPERION_DIRTY_COUNT ?? "?";
+      const iters = result.config?.HYPERION_ITERATIONS ?? "?";
+      const runner = result.data?.runners?.[0];
+      if (runner && !runner.skipped) {
+        md += `| ${branches} | ${perBranch} | ${iters} | ${runner.avgMs.toFixed(3)} | ${runner.totalMs.toFixed(3)} |\n`;
+      } else {
+        md += `| ${branches} | ${perBranch} | ${iters} | ERROR | - |\n`;
+      }
+    }
+  } else {
+    md += "| Dirty Files | Git (ms) | Manifest (ms) | rsync (ms) | tmpfs (ms) | Manifest Speedup |\n";
+    md += "|---|---|---|---|---|---|\n";
 
-    const git = findRunner(runners, "Legacy");
-    const manifest = findRunner(runners, "manifest");
-    const rsync = findRunner(runners, "rsync");
-    const tmpfs = findRunner(runners, "tmpfs");
+    for (const result of results) {
+      const dirty = result.config?.HYPERION_DIRTY_COUNT ?? "?";
+      const runners = result.data?.runners ?? [];
 
-    const gitMs = cellMs(git);
-    const manifestMs = cellMs(manifest);
-    const rsyncMs = cellMs(rsync);
-    const tmpfsMs = cellMs(tmpfs);
-    const speedup = speedupValue(git, manifest);
+      const git = findRunner(runners, "Legacy");
+      const manifest = findRunner(runners, "manifest");
+      const rsync = findRunner(runners, "rsync");
+      const tmpfs = findRunner(runners, "tmpfs");
 
-    md += `| ${dirty} | ${gitMs} | ${manifestMs} | ${rsyncMs} | ${tmpfsMs} | ${speedup} |\n`;
+      const gitMs = cellMs(git);
+      const manifestMs = cellMs(manifest);
+      const rsyncMs = cellMs(rsync);
+      const tmpfsMs = cellMs(tmpfs);
+      const speedup = speedupValue(git, manifest);
+
+      md += `| ${dirty} | ${gitMs} | ${manifestMs} | ${rsyncMs} | ${tmpfsMs} | ${speedup} |\n`;
+    }
   }
 
   writeFileSync(join(resultsDir, `${baseName}.md`), md, "utf8");

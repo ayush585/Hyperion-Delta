@@ -1,0 +1,62 @@
+[
+  {
+    "config": {
+      "HYPERION_MODE": "agent-search",
+      "HYPERION_FILE_COUNT": 500,
+      "HYPERION_DIRTY_COUNT": 3,
+      "HYPERION_SEARCH_CHECKPOINTS": 5,
+      "HYPERION_ITERATIONS": 10
+    },
+    "runners": [
+      {
+        "label": "Agent-Search Stress (5 concurrent branches × 3 files each)",
+        "totalMs": 677.5728,
+        "avgMs": 67.75728,
+        "samples": 10,
+        "speedup": 1,
+        "reduction": 0,
+        "skipped": false
+      }
+    ]
+  },
+  {
+    "config": {
+      "HYPERION_MODE": "agent-search",
+      "HYPERION_FILE_COUNT": 500,
+      "HYPERION_DIRTY_COUNT": 5,
+      "HYPERION_SEARCH_CHECKPOINTS": 8,
+      "HYPERION_ITERATIONS": 5
+    },
+    "runners": [
+      {
+        "label": "Agent-Search Stress (8 concurrent branches × 5 files each)",
+        "totalMs": 227.1096,
+        "avgMs": 45.42192,
+        "samples": 5,
+        "speedup": 1,
+        "reduction": 0,
+        "skipped": false
+      }
+    ]
+  },
+  {
+    "config": {
+      "HYPERION_MODE": "agent-search",
+      "HYPERION_FILE_COUNT": 500,
+      "HYPERION_DIRTY_COUNT": 10,
+      "HYPERION_SEARCH_CHECKPOINTS": 10,
+      "HYPERION_ITERATIONS": 3
+    },
+    "runners": [
+      {
+        "label": "Agent-Search Stress (10 concurrent branches × 10 files each)",
+        "totalMs": 441.892,
+        "avgMs": 147.297333,
+        "samples": 3,
+        "speedup": 1,
+        "reduction": 0,
+        "skipped": false
+      }
+    ]
+  }
+]

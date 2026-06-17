@@ -14,9 +14,29 @@ import {
 import { dirname, join, resolve } from "node:path";
 import { platform } from "node:process";
 
+const CONFIG_PATH = process.env["HYPERION_CONFIG"];
+if (CONFIG_PATH) {
+  try {
+    const config = JSON.parse(readFileSync(CONFIG_PATH, "utf8"));
+    for (const [key, value] of Object.entries(config)) {
+      if (key.startsWith("HYPERION_") && value !== undefined && value !== null) {
+        process.env[key] = String(value);
+      }
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Warning: Failed to load HYPERION_CONFIG from ${CONFIG_PATH}: ${message}`);
+  }
+}
+
 const FILE_COUNT = readPositiveIntegerEnv("HYPERION_FILE_COUNT", 50_000);
 const DIRECTORY_DEPTH = readPositiveIntegerEnv("HYPERION_DIRECTORY_DEPTH", 10);
 const ITERATIONS = readPositiveIntegerEnv("HYPERION_ITERATIONS", 50);
+const DIRTY_COUNT = readPositiveIntegerEnv("HYPERION_DIRTY_COUNT", 1);
+
+const OUTPUT_JSON = process.argv.includes("--json") || process.env["HYPERION_OUTPUT"] === "json";
+
+console.log(`Config: FILE_COUNT=${FILE_COUNT} DIRTY_COUNT=${DIRTY_COUNT} DIRECTORY_DEPTH=${DIRECTORY_DEPTH} ITERATIONS=${ITERATIONS}`);
 
 const ROOT_DIR = resolve(__dirname);
 const WORK_ROOT_DIR = resolveWorkRoot();
@@ -252,32 +272,42 @@ function materializeTrackedFileFromBase(baseRoot: string, workingRoot: string, r
 function mutateWorkspace(
   root: string,
   iteration: number,
+  count: number,
   prepareTrackedFile?: (relativePath: string) => void,
 ): MutationManifest {
-  const targetRelativePath = relativeFilePathFor(mutationTargetIndex(iteration));
-  const targetFile = join(root, targetRelativePath);
-  const createdRelativePath = join(
-    "scratch",
-    `agent_mistake_${String(iteration).padStart(2, "0")}.tmp`,
-  );
-  const createdFile = join(root, createdRelativePath);
+  const modifiedTrackedFiles: string[] = [];
+  const createdFiles: string[] = [];
 
-  prepareTrackedFile?.(targetRelativePath);
-  writeFileSync(
-    targetFile,
-    [
-      `export const broken_${iteration} = ${iteration};`,
-      "throw new Error(\"agent mistake\");",
-      "",
-    ].join("\n"),
-  );
+  for (let d = 0; d < count; d += 1) {
+    const fileIndex = FILE_COUNT - 1 - ((iteration * count + d) % 997) % FILE_COUNT;
+    const targetRelativePath = relativeFilePathFor(fileIndex);
+    const targetFile = join(root, targetRelativePath);
+    const createdRelativePath = join(
+      "scratch",
+      `agent_mistake_${String(iteration).padStart(2, "0")}_${d}.tmp`,
+    );
+    const createdFile = join(root, createdRelativePath);
 
-  mkdirSync(dirname(createdFile), { recursive: true });
-  writeFileSync(createdFile, `temporary failed branch ${iteration}\n`);
+    prepareTrackedFile?.(targetRelativePath);
+    writeFileSync(
+      targetFile,
+      [
+        `export const broken_${iteration}_${d} = ${iteration};`,
+        "throw new Error(\"agent mistake\");",
+        "",
+      ].join("\n"),
+    );
+
+    mkdirSync(dirname(createdFile), { recursive: true });
+    writeFileSync(createdFile, `temporary failed branch ${iteration}_${d}\n`);
+
+    modifiedTrackedFiles.push(targetRelativePath);
+    createdFiles.push(createdRelativePath);
+  }
 
   return {
-    modifiedTrackedFiles: [targetRelativePath],
-    createdFiles: [createdRelativePath],
+    modifiedTrackedFiles,
+    createdFiles,
   };
 }
 
@@ -285,7 +315,7 @@ function runLegacyRunner(): RunnerStats {
   const samplesNs: bigint[] = [];
 
   for (let iteration = 0; iteration < ITERATIONS; iteration += 1) {
-    mutateWorkspace(GIT_DIR, iteration);
+    mutateWorkspace(GIT_DIR, iteration, DIRTY_COUNT);
 
     const { elapsedNs } = timeBlock(() => {
       run("git reset --hard HEAD", GIT_DIR);
@@ -316,7 +346,7 @@ function runManifestTargetedRunner(): RunnerStats {
 
   const samplesNs: bigint[] = [];
   for (let iteration = 0; iteration < ITERATIONS; iteration += 1) {
-    const manifest = mutateWorkspace(MANIFEST_DIR, iteration);
+    const manifest = mutateWorkspace(MANIFEST_DIR, iteration, DIRTY_COUNT);
 
     const { elapsedNs } = timeBlock(() => {
       revertFromManifest(BASE_DIR, MANIFEST_DIR, manifest);
@@ -374,7 +404,7 @@ function runRsyncTargetedRunner(): RunnerStats {
 
   const samplesNs: bigint[] = [];
   for (let iteration = 0; iteration < ITERATIONS; iteration += 1) {
-    const manifest = mutateWorkspace(RSYNC_DIR, iteration, (relativePath) => {
+    const manifest = mutateWorkspace(RSYNC_DIR, iteration, DIRTY_COUNT, (relativePath) => {
       materializeTrackedFileFromBase(BASE_DIR, RSYNC_DIR, relativePath);
     });
 
@@ -431,10 +461,13 @@ function runTmpfsTargetedRunner(): RunnerStats {
 
   const samplesNs: bigint[] = [];
   for (let iteration = 0; iteration < ITERATIONS; iteration += 1) {
-    const relativePath = relativeFilePathFor(mutationTargetIndex(iteration));
-    materializeTrackedFileFromBase(BASE_DIR, TMPFS_BASE_DIR, relativePath);
-    materializeTrackedFileFromBase(TMPFS_BASE_DIR, TMPFS_WORKING_DIR, relativePath);
-    const manifest = mutateWorkspace(TMPFS_WORKING_DIR, iteration);
+    for (let d = 0; d < DIRTY_COUNT; d += 1) {
+      const fileIndex = FILE_COUNT - 1 - ((iteration * DIRTY_COUNT + d) % 997) % FILE_COUNT;
+      const relativePath = relativeFilePathFor(fileIndex);
+      materializeTrackedFileFromBase(BASE_DIR, TMPFS_BASE_DIR, relativePath);
+      materializeTrackedFileFromBase(TMPFS_BASE_DIR, TMPFS_WORKING_DIR, relativePath);
+    }
+    const manifest = mutateWorkspace(TMPFS_WORKING_DIR, iteration, DIRTY_COUNT);
 
     const { elapsedNs } = timeBlock(() => {
       revertFromManifest(TMPFS_BASE_DIR, TMPFS_WORKING_DIR, manifest);
@@ -508,36 +541,142 @@ function printTable(runners: RunnerStats[]): void {
   console.log(divider);
 }
 
+function status(message: string): void {
+  if (OUTPUT_JSON) {
+    console.error(message);
+  } else {
+    console.log(message);
+  }
+}
+
+function printJsonResults(runners: RunnerStats[]): void {
+  const legacy = runners[0];
+  const legacyTotal = sumNs(legacy.samplesNs);
+  const output = {
+    config: {
+      fileCount: FILE_COUNT,
+      directoryDepth: DIRECTORY_DEPTH,
+      iterations: ITERATIONS,
+      dirtyCount: DIRTY_COUNT,
+      platform: platform,
+      wsl2: isWsl2(),
+    },
+    runners: runners.map((stats) => {
+      if (stats.skippedReason) {
+        return {
+          label: stats.label,
+          totalMs: 0,
+          avgMs: 0,
+          samples: 0,
+          speedup: 0,
+          reduction: 0,
+          skipped: true,
+        };
+      }
+      const total = sumNs(stats.samplesNs);
+      const speedup = total === 0n ? 0 : Number(legacyTotal) / Number(total);
+      const reduction = legacyTotal === 0n ? 0 : (1 - Number(total) / Number(legacyTotal)) * 100;
+      return {
+        label: stats.label,
+        totalMs: nsToMs(total),
+        avgMs: nsToMs(averageNs(stats.samplesNs)),
+        samples: stats.samplesNs.length,
+        speedup: Number(speedup.toFixed(2)),
+        reduction: Number(reduction.toFixed(2)),
+        skipped: false,
+      };
+    }),
+  };
+  console.log(JSON.stringify(output, null, 2));
+}
+
+function printResults(runners: RunnerStats[]): void {
+  if (OUTPUT_JSON) {
+    printJsonResults(runners);
+  } else {
+    printTable(runners);
+  }
+}
+
+const SEARCH_CHECKPOINTS = readPositiveIntegerEnv("HYPERION_SEARCH_CHECKPOINTS", 5);
+const AGENT_SEARCH_MODE = process.env.HYPERION_MODE === "agent-search";
+
+function runAgentSearchRunner(): RunnerStats {
+  const searchBase = join(WORK_ROOT_DIR, ".hyperion_agent_search_git");
+  createWritableWorkspace(BASE_DIR, searchBase);
+  run("git init -q", searchBase);
+  run("git add .", searchBase);
+  run("git commit -q -m search-baseline", searchBase);
+
+  const searchDir = join(WORK_ROOT_DIR, ".hyperion_agent_search_workspace");
+  const samplesNs: bigint[] = [];
+  for (let iteration = 0; iteration < ITERATIONS; iteration += 1) {
+    safeRmDir(searchDir);
+    cpSync(searchBase, searchDir, { recursive: true });
+    makeWritable(searchDir);
+
+    const { elapsedNs } = timeBlock(() => {
+      for (let branch = 0; branch < SEARCH_CHECKPOINTS; branch += 1) {
+        for (let d = 0; d < DIRTY_COUNT; d += 1) {
+          const fileIndex = FILE_COUNT - 1 - ((branch * DIRTY_COUNT + d + iteration * 1000) % 997) % FILE_COUNT;
+          const filePath = filePathFor(fileIndex, searchDir);
+          writeFileSync(
+            filePath,
+            `export const branch_${branch}_${d} = "branch-${branch}";\n`,
+          );
+          const scratchPath = join(searchDir, "scratch", `branch_${branch}_agent_${d}.tmp`);
+          mkdirSync(dirname(scratchPath), { recursive: true });
+          writeFileSync(scratchPath, `branch ${branch} scratch ${d}\n`);
+        }
+      }
+    });
+    samplesNs.push(elapsedNs);
+  }
+
+  safeRmDir(searchBase);
+  safeRmDir(searchDir);
+
+  return {
+    label: `Agent-Search Stress (${SEARCH_CHECKPOINTS} concurrent branches × ${DIRTY_COUNT} files each)`,
+    samplesNs,
+  };
+}
+
 function printRunnerComplete(stats: RunnerStats): void {
   if (stats.skippedReason) {
-    console.log(`${stats.label} skipped: ${stats.skippedReason}`);
+    status(`${stats.label} skipped: ${stats.skippedReason}`);
     return;
   }
 
-  console.log(`${stats.label} complete in ${formatMs(sumNs(stats.samplesNs))}`);
+  status(`${stats.label} complete in ${formatMs(sumNs(stats.samplesNs))}`);
 }
 
 function main(): void {
-  console.log("Hyperion Delta-Bench");
-  console.log(`Platform: ${platform}${isWsl2() ? " (WSL2)" : ""}`);
-  console.log(`Work root: ${WORK_ROOT_DIR}`);
-  console.log(`Fixture: ${FILE_COUNT.toLocaleString()} TypeScript files, ${DIRECTORY_DEPTH} layers deep`);
-  console.log(`Iterations: ${ITERATIONS}`);
-  console.log("Strategy: compare Git whole-tree reset against targeted modified-file rollback");
+  status("Hyperion Delta-Bench");
+  status(`Platform: ${platform}${isWsl2() ? " (WSL2)" : ""}`);
+  status(`Work root: ${WORK_ROOT_DIR}`);
+  status(`Fixture: ${FILE_COUNT.toLocaleString()} TypeScript files, ${DIRECTORY_DEPTH} layers deep`);
+  status(`Iterations: ${ITERATIONS}`);
+  status("Strategy: compare Git whole-tree reset against targeted modified-file rollback");
 
-  console.log("\nPhase 1: Synthesizing read-only base monorepo...");
+  status("\nPhase 1: Synthesizing read-only base monorepo...");
   const synthesizeNs = synthesizeBaseMonorepo();
-  console.log(`Phase 1 complete in ${formatMs(synthesizeNs)}`);
+  status(`Phase 1 complete in ${formatMs(synthesizeNs)}`);
 
-  console.log("\nPreparing Legacy Runner Git workspace...");
+  if (AGENT_SEARCH_MODE) {
+    status(`\nPhase 2: Running Agent-Search Stress Test (${SEARCH_CHECKPOINTS} branches × ${DIRTY_COUNT} files each)...`);
+    const search = runAgentSearchRunner();
+    printRunnerComplete(search);
+    printResults([search]);
+  } else {
   const gitInitNs = initializeGitRepository();
-  console.log(`Git baseline complete in ${formatMs(gitInitNs)}`);
+  status(`Git baseline complete in ${formatMs(gitInitNs)}`);
 
-  console.log("\nPhase 2: Running Legacy Runner control group...");
+  status("\nPhase 2: Running Legacy Runner control group...");
   const legacy = runLegacyRunner();
   printRunnerComplete(legacy);
 
-  console.log("\nPhase 3: Running optimized targeted reversion runners...");
+  status("\nPhase 3: Running optimized targeted reversion runners...");
   const manifest = runManifestTargetedRunner();
   printRunnerComplete(manifest);
 
@@ -547,10 +686,13 @@ function main(): void {
   const tmpfs = runTmpfsTargetedRunner();
   printRunnerComplete(tmpfs);
 
-  printTable([legacy, manifest, rsync, tmpfs]);
+  printResults([legacy, manifest, rsync, tmpfs]);
 
-  console.log("\nMetadata lesson: full directory clone/delete was intentionally removed from Phase 3.");
-  console.log("The optimized runners only touch files the simulated agent changed.");
+  if (!OUTPUT_JSON) {
+    console.log("\nMetadata lesson: full directory clone/delete was intentionally removed from Phase 3.");
+    console.log("The optimized runners only touch files the simulated agent changed.");
+  }
+}
 }
 
 try {
