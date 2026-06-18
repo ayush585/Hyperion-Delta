@@ -74,17 +74,17 @@ Core methods:
 - `track(path | paths)`: manually register paths for future integrations that cannot use interception.
 - `declareToolOutputs(contract)`: declare exact generated or ignored tool outputs so they can be tracked without broad ignored-root scans.
 - `getDiagnostics()`: return a read-only snapshot of strategy, storage, hot-buffer, Windows volume, checkpoint, and ignored-write diagnostics.
-- `snapshot(options?)`: capture a checkpoint and return a `CheckpointId`, with optional `parentId`, `branchId`, and `subagentId` lineage tags.
-- `fork(parentCheckpointId, options?)`: create a child checkpoint from an active parent and inherit lineage tags unless overridden.
+- `snapshot(options?)`: capture a checkpoint and return a `CheckpointId`, with optional `parentId`, `branchId`, `subagentId`, `agentId`, and `createdBy` lineage tags.
+- `fork(parentCheckpointId?, options?)`: create a child checkpoint from an active parent and inherit lineage tags unless overridden; if parent is omitted, Hyperion uses the most recent active checkpoint.
 - `runInBranch(branchCheckpointId, callback)`: execute branch-scoped work and reconcile that branch before returning.
 - `promoteBranch(branchCheckpointId, options?)`: promote a branch checkpoint with deterministic merge planning; current conflict mode is reject-only.
 - `dropBranch(branchCheckpointId)`: drop a branch with rollback semantics guarded by overlap conflict checks.
 - `getCheckpointLineage(checkpointId)`: return oldest-to-newest checkpoint ancestry.
 - `listCheckpointChildren(parentId, options?)`: list direct children of a checkpoint.
-- `listBranchHeads(filter?)`: list latest checkpoint heads grouped by `branchId`.
-- `listSubagentHeads(filter?)`: list latest checkpoint heads grouped by `subagentId`.
+- `listBranchHeads(filter?)`: list latest checkpoint heads grouped by `branchId` (supports `branchId`, `subagentId`, `agentId`, and `includeInactive` filters).
+- `listSubagentHeads(filter?)`: list latest checkpoint heads grouped by `subagentId` (supports `branchId`, `subagentId`, `agentId`, and `includeInactive` filters).
 - `reconcile(checkpointId?)`: refresh dirty-set state after child-process or native-tool writes.
-- `rollback(checkpointId)`: reconcile, restore dirty paths, delete created paths, and clean ghost directories.
+- `rollback(checkpointId)`: reconcile, restore dirty paths, delete created paths, and clean ghost directories; rejects overlapping sibling-branch conflicts with typed errors.
 - `recoverAttempts()`: inspect durable checkpoint journals and whether they can be rehydrated.
 - `rehydrateAttempt(checkpointId)`: recreate safe in-memory checkpoint state from durable recovery metadata.
 - `exportPatch(checkpointId)`: emit a Git-compatible unified diff for an active checkpoint.
@@ -186,7 +186,7 @@ npm run package:smoke
 
 The published package is intentionally limited to `dist`, the README/architecture docs, the benchmark hero image used by the README, and required npm metadata. Benchmark commands are repository-checkout utilities and are not part of the SDK runtime surface.
 
-Publishing uses GitHub Actions trusted publishing with npm provenance (OIDC). Before the first public publish, a maintainer must configure npm trusted publishing for `hyperion-delta` with repository `ayush585/Hyperion-Delta`, workflow `.github/workflows/publish.yml`, and environment `npm-publish`.
+Publishing uses GitHub Actions trusted publishing with npm provenance (OIDC). For this repository the trusted publisher is configured; forks should configure npm trusted publishing for their own package/repository/workflow/environment mapping.
 
 Manual dispatch is tag-only. Trigger `Publish Package` from `main` and provide `tag` as `refs/tags/vX.Y.Z`.
 
