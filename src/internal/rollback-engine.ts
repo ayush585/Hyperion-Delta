@@ -53,6 +53,7 @@ export class RollbackEngine {
     for (const entry of createdEntries) {
       storage.deleteCreatedPath(entry.relativePath);
       ghostDirectoryCleaner.cleanupAfterCreatedPath(entry.relativePath);
+      checkpoint.dirty.delete(entry.relativePath);
     }
 
     for (const entry of restoreEntries) {
@@ -67,6 +68,7 @@ export class RollbackEngine {
       }
 
       storage.restoreFile(entry.relativePath);
+      checkpoint.dirty.delete(entry.relativePath);
     }
   }
 

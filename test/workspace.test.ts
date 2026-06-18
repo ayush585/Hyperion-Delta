@@ -1652,7 +1652,7 @@ describe("HyperionWorkspace", () => {
     assert.equal(getWorkspaceCheckpoint(workspace, checkpointId)?.status, "disposed");
   });
 
-  it("marks durable attempt journals disposed after successful rollback", async () => {
+  it("marks durable attempt journals disposed after successful rollback and prunes dirty entries", async () => {
     const root = createTempWorkspace();
     const workspace = new HyperionWorkspace(root);
     const checkpointId = await workspace.snapshot();
@@ -1662,7 +1662,7 @@ describe("HyperionWorkspace", () => {
     const journal = readWorkspaceJournal(root, checkpointId);
 
     assert.equal(journal.status, "disposed");
-    assert.equal(journal.dirty.some((entry) => entry.relativePath === "created.txt"), true);
+    assert.equal(journal.dirty.some((entry) => entry.relativePath === "created.txt"), false);
   });
 
   it("restores modified files when a backup record exists", async () => {
@@ -1728,6 +1728,77 @@ describe("HyperionWorkspace", () => {
     assert.equal(getWorkspaceCheckpoint(workspace, checkpointId)?.status, "active");
   });
 
+  it("keeps only unprocessed dirty entries after a partial rollback failure", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const restoredRelativePath = "nested/restored-first.txt";
+    const failingRelativePath = "fail.txt";
+    const restoredPath = join(root, "nested", "restored-first.txt");
+    const failingPath = join(root, "fail.txt");
+    mkdirSync(join(root, "nested"), { recursive: true });
+    writeFileSync(restoredPath, "before-restored");
+    writeFileSync(failingPath, "before-failing");
+    const checkpointId = await workspace.snapshot();
+    backupWorkspaceCheckpointPath(workspace, checkpointId, restoredRelativePath);
+    backupWorkspaceCheckpointPath(workspace, checkpointId, failingRelativePath);
+    writeFileSync(restoredPath, "after-restored");
+    writeFileSync(failingPath, "after-failing");
+
+    const storage = getWorkspaceCheckpointStorage(workspace, checkpointId);
+    assert.ok(storage);
+
+    let failOnce = true;
+    const wrappedStorage: StorageStrategy = {
+      backupFile(pathOrPathLike: string) {
+        return storage.backupFile(pathOrPathLike);
+      },
+      restoreFile(pathOrPathLike: string) {
+        if (pathOrPathLike === failingRelativePath && failOnce) {
+          failOnce = false;
+          throw new Error("injected restore failure");
+        }
+
+        return storage.restoreFile(pathOrPathLike);
+      },
+      deleteCreatedPath(pathOrPathLike: string) {
+        storage.deleteCreatedPath(pathOrPathLike);
+      },
+      getBackupRecord(pathOrPathLike: string) {
+        return storage.getBackupRecord(pathOrPathLike);
+      },
+      getBackupRecords() {
+        return storage.getBackupRecords();
+      },
+      readBackupFile(pathOrPathLike: string) {
+        return storage.readBackupFile(pathOrPathLike);
+      },
+      getDiagnostics() {
+        return storage.getDiagnostics();
+      },
+      hydrateBackupRecords(records) {
+        storage.hydrateBackupRecords?.(records);
+      },
+      cleanup() {
+        storage.cleanup?.();
+      },
+    };
+    replaceWorkspaceCheckpointStorage(workspace, checkpointId, wrappedStorage);
+
+    await assert.rejects(() => workspace.rollback(checkpointId), /injected restore failure/);
+
+    const checkpointAfterFailure = getWorkspaceCheckpoint(workspace, checkpointId);
+    assert.equal(checkpointAfterFailure?.status, "active");
+    assert.equal(checkpointAfterFailure?.dirty.has(restoredRelativePath), false);
+    assert.equal(checkpointAfterFailure?.dirty.has(failingRelativePath), true);
+    assert.equal(readFileSync(restoredPath, "utf8"), "before-restored");
+    assert.equal(readFileSync(failingPath, "utf8"), "after-failing");
+
+    await workspace.rollback(checkpointId);
+
+    assert.equal(readFileSync(failingPath, "utf8"), "before-failing");
+    assert.equal(getWorkspaceCheckpoint(workspace, checkpointId)?.status, "disposed");
+  });
+
   it("cleans active checkpoint storage namespaces during dispose", async () => {
     const root = createTempWorkspace();
     const tmpfsRoot = createTempWorkspace();
@@ -1761,7 +1832,7 @@ describe("HyperionWorkspace", () => {
     assert.equal(readWorkspaceJournal(root, checkpointId).status, "active");
   });
 
-  it("calls reconcile before rollback and records dirty entries", async () => {
+  it("calls reconcile before rollback and clears dirty entries after rollback", async () => {
     const root = createTempWorkspace();
     const workspace = new HyperionWorkspace(root);
     const checkpointId = await workspace.snapshot();
@@ -1777,7 +1848,7 @@ describe("HyperionWorkspace", () => {
     await workspace.rollback(checkpointId);
 
     assert.equal(reconcileCalled, true);
-    assert.equal(getWorkspaceCheckpoint(workspace, checkpointId)?.dirty.has("created.txt"), true);
+    assert.equal(getWorkspaceCheckpoint(workspace, checkpointId)?.dirty.has("created.txt"), false);
   });
 
   it("rolls back child-process created files without an explicit reconcile call", async () => {
