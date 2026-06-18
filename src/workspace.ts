@@ -633,6 +633,14 @@ export class HyperionWorkspace {
       }
     }
 
+    for (const relativePath of this.manualTrackedPaths) {
+      declaredPaths.add(relativePath);
+    }
+
+    for (const relativePath of this.manualTrackedIgnoredPaths) {
+      declaredPaths.add(relativePath);
+    }
+
     for (const relativePath of declaredPaths) {
       const statEntry = this.statDeclaredOutput(relativePath);
 
