@@ -48,5 +48,6 @@ export type {
   StateManifest,
   StatLedgerEntry,
   StorageStrategyKind,
+  VfsMutationKind,
 } from "./types.js";
 export { HyperionWorkspace } from "./workspace.js";

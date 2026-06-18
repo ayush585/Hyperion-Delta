@@ -65,9 +65,11 @@ function getWorkspaceCheckpoint(
 ): Checkpoint | undefined {
   return (
     workspace as unknown as {
-      getCheckpoint(checkpointId: CheckpointId): Checkpoint | undefined;
+      checkpointStore: {
+        getCheckpoint(checkpointId: CheckpointId): Checkpoint | undefined;
+      };
     }
-  ).getCheckpoint(checkpointId);
+  ).checkpointStore.getCheckpoint(checkpointId);
 }
 
 function waitForCallback(
@@ -439,6 +441,134 @@ describe("VFS interceptor callback APIs", () => {
     assert.equal(checkpoint?.dirty.get("scratch")?.fileType, "directory");
   });
 
+  it("records callback write and writev descriptor mutations and rolls them back", async () => {
+    const root = createTempWorkspace();
+    const sourcePath = path.join(root, "source.txt");
+    writeFileSync(sourcePath, "original");
+    const workspace = createWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    const fs = getCommonJsFs();
+
+    workspace.installFsInterceptor();
+    const descriptor = fs.openSync(sourcePath, "r+");
+
+    try {
+      await waitForCallback((callback) => fs.write(descriptor, "mut", callback));
+
+      if (typeof fs.writev === "function") {
+        await waitForCallback((callback) =>
+          fs.writev(descriptor, [Buffer.from("x"), Buffer.from("y")], callback),
+        );
+      }
+    } finally {
+      fs.closeSync(descriptor);
+    }
+
+    assert.equal(getWorkspaceCheckpoint(workspace, checkpointId)?.dirty.get("source.txt")?.capturedBy, "vfs");
+
+    await workspace.rollback(checkpointId);
+
+    assert.equal(readFileSync(sourcePath, "utf8"), "original");
+  });
+
+  it("records callback truncate mutations and rolls them back", async () => {
+    const root = createTempWorkspace();
+    const sourcePath = path.join(root, "source.txt");
+    writeFileSync(sourcePath, "original");
+    const workspace = createWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    const fs = getCommonJsFs();
+
+    workspace.installFsInterceptor();
+    await waitForCallback((callback) => fs.truncate(sourcePath, 2, callback));
+
+    assert.equal(getWorkspaceCheckpoint(workspace, checkpointId)?.dirty.get("source.txt")?.capturedBy, "vfs");
+
+    await workspace.rollback(checkpointId);
+
+    assert.equal(readFileSync(sourcePath, "utf8"), "original");
+  });
+
+  it("records callback link destination mutations and removes them during rollback", async () => {
+    const root = createTempWorkspace();
+    const sourcePath = path.join(root, "source.txt");
+    const linkPath = path.join(root, "linked.txt");
+    writeFileSync(sourcePath, "original");
+    const workspace = createWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    const fs = getCommonJsFs();
+
+    workspace.installFsInterceptor();
+    await waitForCallback((callback) => fs.link(sourcePath, linkPath, callback));
+
+    assert.equal(getWorkspaceCheckpoint(workspace, checkpointId)?.dirty.get("linked.txt")?.capturedBy, "vfs");
+
+    await workspace.rollback(checkpointId);
+
+    assert.equal(readFileSync(sourcePath, "utf8"), "original");
+    assert.equal(existsSync(linkPath), false);
+  });
+
+  it("records callback symlink destination mutations when the platform allows creating symlinks", async () => {
+    const root = createTempWorkspace();
+    const targetPath = path.join(root, "target.txt");
+    const symlinkPath = path.join(root, "target-link.txt");
+    writeFileSync(targetPath, "target");
+    const workspace = createWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    const fs = getCommonJsFs();
+
+    workspace.installFsInterceptor();
+
+    try {
+      await waitForCallback((callback) => fs.symlink("target.txt", symlinkPath, callback));
+    } catch {
+      return;
+    }
+
+    assert.equal(getWorkspaceCheckpoint(workspace, checkpointId)?.dirty.get("target-link.txt")?.capturedBy, "vfs");
+
+    await workspace.rollback(checkpointId);
+
+    assert.equal(existsSync(symlinkPath), false);
+  });
+
+  it("records callback fchmod and futimes descriptor mutations", async () => {
+    const root = createTempWorkspace();
+    const sourcePath = path.join(root, "source.txt");
+    writeFileSync(sourcePath, "original");
+    const workspace = createWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    const fs = getCommonJsFs();
+
+    if (typeof fs.fchmod !== "function" || typeof fs.futimes !== "function") {
+      return;
+    }
+
+    workspace.installFsInterceptor();
+    const descriptor = fs.openSync(sourcePath, "r+");
+    let succeeded = false;
+
+    try {
+      const chmodError = await captureCallbackError((callback) => fs.fchmod(descriptor, 0o600, callback));
+      const futimesError = await captureCallbackError((callback) =>
+        fs.futimes(descriptor, new Date(), new Date(), callback),
+      );
+
+      succeeded = !chmodError || !futimesError;
+    } finally {
+      fs.closeSync(descriptor);
+    }
+
+    const checkpoint = getWorkspaceCheckpoint(workspace, checkpointId);
+    if (!succeeded) {
+      assert.equal(checkpoint?.dirty.has("source.txt"), false);
+      return;
+    }
+
+    assert.equal(checkpoint?.dirty.get("source.txt")?.capturedBy, "vfs");
+  });
+
   it("records callback rename source and destination and rolls both back", async () => {
     const root = createTempWorkspace();
     const oldPath = path.join(root, "old.txt");
@@ -628,6 +758,42 @@ describe("VFS interceptor fs/promises APIs", () => {
     assert.equal(checkpoint?.dirty.get("source.txt")?.capturedBy, "vfs");
     assert.equal(checkpoint?.dirty.get("scratch")?.capturedBy, "vfs");
     assert.equal(checkpoint?.dirty.get("scratch")?.fileType, "directory");
+  });
+
+  it("records truncate, link, and symlink promise mutations and rolls them back", async () => {
+    const root = createTempWorkspace();
+    const sourcePath = path.join(root, "source.txt");
+    const linkPath = path.join(root, "linked.txt");
+    const symlinkPath = path.join(root, "target-link.txt");
+    writeFileSync(sourcePath, "original");
+    const workspace = createWorkspace(root);
+    const checkpointId = await workspace.snapshot();
+    const fsPromises = getCommonJsFsPromises();
+    let createdSymlink = false;
+
+    workspace.installFsInterceptor();
+    await fsPromises.truncate(sourcePath, 2);
+    await fsPromises.link(sourcePath, linkPath);
+
+    try {
+      await fsPromises.symlink("source.txt", symlinkPath);
+      createdSymlink = true;
+    } catch {
+      createdSymlink = false;
+    }
+
+    const checkpoint = getWorkspaceCheckpoint(workspace, checkpointId);
+    assert.equal(checkpoint?.dirty.get("source.txt")?.capturedBy, "vfs");
+    assert.equal(checkpoint?.dirty.get("linked.txt")?.capturedBy, "vfs");
+    if (createdSymlink) {
+      assert.equal(checkpoint?.dirty.get("target-link.txt")?.capturedBy, "vfs");
+    }
+
+    await workspace.rollback(checkpointId);
+
+    assert.equal(readFileSync(sourcePath, "utf8"), "original");
+    assert.equal(existsSync(linkPath), false);
+    assert.equal(existsSync(symlinkPath), false);
   });
 
   it("records promise rename source and destination and rolls both back", async () => {

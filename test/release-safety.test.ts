@@ -60,11 +60,26 @@ describe("release safety", () => {
     assert.doesNotMatch(workflow, /--provenance/);
   });
 
+  it("keeps docs deploy workflow cached and docs artifacts ignored", () => {
+    const workflow = readFileSync(path.join(repoRoot, ".github/workflows/docs.yml"), "utf8");
+    const docsGitignore = readFileSync(path.join(repoRoot, "docs/.gitignore"), "utf8");
+
+    assert.match(workflow, /name:\s*Setup Node/);
+    assert.match(workflow, /cache:\s*npm/);
+    assert.match(workflow, /cache-dependency-path:\s*docs\/package-lock\.json/);
+    assert.match(docsGitignore, /^\*\.log$/m);
+    assert.match(docsGitignore, /^\*\.tgz$/m);
+  });
+
   it("keeps trusted publishing explicit and token-free", () => {
     const workflow = readFileSync(path.join(repoRoot, ".github/workflows/publish.yml"), "utf8");
 
     assert.match(workflow, /release:/);
     assert.match(workflow, /workflow_dispatch:/);
+    assert.match(workflow, /default:\s*"refs\/heads\/main"/);
+    assert.match(workflow, /name:\s*Guard manual publish branch/);
+    assert.match(workflow, /if:\s*github\.event_name == 'workflow_dispatch'/);
+    assert.match(workflow, /Manual publish workflow_dispatch is allowed only from refs\/heads\/main/);
     assert.match(workflow, /id-token:\s*write/);
     assert.match(workflow, /contents:\s*read/);
     assert.match(workflow, /environment:\s*npm-publish/);

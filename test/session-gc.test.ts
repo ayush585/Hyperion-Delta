@@ -136,7 +136,10 @@ describe("HyperionSessionManager", () => {
     const workspaceRoot = createTempRoot();
     const corruptSession = createSessionDir(workspaceRoot, "session-corrupt", "{");
     const missingLockSession = createSessionDir(workspaceRoot, "session-missing");
-    const oldEnoughNow = Date.now() + STALE_SESSION_TTL_MS + 1000;
+    const oldEnoughNow =
+      Math.max(statSync(corruptSession).mtimeMs, statSync(missingLockSession).mtimeMs) +
+      STALE_SESSION_TTL_MS +
+      1000;
 
     const manager = new HyperionSessionManager({
       workspaceRoot,

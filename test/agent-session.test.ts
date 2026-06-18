@@ -364,6 +364,40 @@ describe("HyperionAgentSession", () => {
     assert.match(result.stderr ?? "", /err/);
   });
 
+  it("times out hung child processes in exec", async () => {
+    const root = createTempWorkspace();
+    const session = createSession(root);
+    const startedAt = Date.now();
+
+    await assert.rejects(
+      () => session.exec(process.execPath, ["-e", "setInterval(() => {}, 1000);"], { timeoutMs: 200 }),
+      /Command timed out after 200ms/,
+    );
+
+    assert.ok(Date.now() - startedAt < 5_000);
+  });
+
+  it("rolls back attempt changes when context exec times out", async () => {
+    const root = createTempWorkspace();
+    const fs = getCommonJsFs();
+    const session = createSession(root);
+
+    await assert.rejects(
+      () =>
+        session.runAttempt(async ({ exec }) => {
+          fs.writeFileSync(path.join(root, "created-before-timeout.txt"), "created");
+          await exec(process.execPath, ["-e", "setInterval(() => {}, 1000);"], { timeoutMs: 200 });
+        }),
+      (error) => {
+        assert.match(String((error as Error).message), /Command timed out/);
+        assert.equal((error as { rolledBack?: boolean }).rolledBack, true);
+        return true;
+      },
+    );
+
+    assert.equal(existsSync(path.join(root, "created-before-timeout.txt")), false);
+  });
+
   it("disposes idempotently and uninstalls the workspace interceptor", async () => {
     const root = createTempWorkspace();
     const session = createSession(root);
@@ -414,6 +448,7 @@ describe("HyperionAgentSession", () => {
     const execOptions: HyperionExecOptions = {
       captureOutput: true,
       rejectOnNonZero: false,
+      timeoutMs: 1_000,
     };
     const execResult: HyperionExecResult = {
       command: "node",

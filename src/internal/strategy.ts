@@ -10,7 +10,6 @@ export type StrategySelectionReason =
   | "tmpfs-disabled"
   | "tmpfs-unavailable"
   | "cross-device-link-risk"
-  | "rsync-unavailable"
   | "unsupported-platform";
 
 export interface StrategySelection {
@@ -46,12 +45,8 @@ export function selectStorageStrategy(
       return { kind: "tmpfs", reason: "tmpfs-available" };
     }
 
-    if (profile.hasRsync && profile.sameDeviceForLinks) {
+    if (profile.sameDeviceForLinks) {
       return { kind: "posix-link", reason: "posix-links-available" };
-    }
-
-    if (!profile.hasRsync) {
-      return { kind: "pure-manifest", reason: "rsync-unavailable" };
     }
 
     return { kind: "pure-manifest", reason: "cross-device-link-risk" };

@@ -41,6 +41,10 @@ export function toPosixPath(nativePath: string): string {
 }
 
 function rejectTraversal(rawPath: string): void {
+  if (rawPath.includes("\0")) {
+    throw new HyperionPathError(`Null bytes are not allowed in paths: ${rawPath}`);
+  }
+
   if (/^[A-Za-z]:($|[^\\/])/.test(rawPath)) {
     throw new HyperionPathError(`Drive-relative paths are not allowed: ${rawPath}`);
   }

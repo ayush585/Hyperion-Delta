@@ -2,6 +2,8 @@ export type CheckpointId = string;
 
 export type StorageStrategyKind = "tmpfs" | "posix-link" | "ntfs-link" | "pure-manifest";
 
+export type VfsMutationKind = "write" | "delete" | "metadata" | "mkdir";
+
 export interface HyperionConfig {
   workspaceRoot: string;
   useTmpfs?: boolean;
@@ -150,7 +152,7 @@ export interface HyperionWindowsVolumeDiagnostics {
 
 export interface HyperionIgnoredWriteEvent {
   relativePath: string;
-  kind: string;
+  kind: VfsMutationKind;
   capturedAt: number;
   action: "blocked" | "ignored" | "declared";
 }

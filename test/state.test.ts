@@ -70,6 +70,49 @@ function createManifest(entries: StatLedgerEntry[]): StateManifest {
   };
 }
 
+function createDirectoryEntry(
+  name: string,
+  type: "file" | "directory" | "symlink" = "file",
+): {
+  name: string;
+  isDirectory(): boolean;
+  isFile(): boolean;
+  isSymbolicLink(): boolean;
+} {
+  return {
+    name,
+    isDirectory: () => type === "directory",
+    isFile: () => type === "file",
+    isSymbolicLink: () => type === "symlink",
+  };
+}
+
+function createStatLike(
+  type: "file" | "directory" | "symlink" = "file",
+): {
+  size: number;
+  mtimeMs: number;
+  mode: number;
+  isDirectory(): boolean;
+  isFile(): boolean;
+  isSymbolicLink(): boolean;
+} {
+  return {
+    size: 1,
+    mtimeMs: 1,
+    mode: type === "directory" ? 0o040755 : 0o100644,
+    isDirectory: () => type === "directory",
+    isFile: () => type === "file",
+    isSymbolicLink: () => type === "symlink",
+  };
+}
+
+function createErrnoError(code: string, message = code): NodeJS.ErrnoException {
+  const error = new Error(message) as NodeJS.ErrnoException;
+  error.code = code;
+  return error;
+}
+
 function commandAvailable(command: string): boolean {
   try {
     execFileSync(command, ["--version"], { stdio: "ignore" });
@@ -169,6 +212,113 @@ describe("stat ledger", () => {
     assert.equal(manifest.statEntries.get("src/index.ts")?.type, "file");
     assert.equal(typeof manifest.statEntries.get("src/index.ts")?.mtimeMs, "number");
     assert.equal(typeof manifest.statEntries.get("src/index.ts")?.size, "number");
+  });
+
+  it("continues scanning when an entry disappears between readdir and lstat", () => {
+    const root = createTempWorkspace();
+    const missingPath = path.join(root, "missing.txt");
+    const presentPath = path.join(root, "present.txt");
+    const engine = new HybridStateEngine(createConfig(root), {
+      gitAvailableHint: false,
+      adapter: {
+        readdirSync: (directoryPath) => {
+          if (directoryPath === root) {
+            return [createDirectoryEntry("missing.txt"), createDirectoryEntry("present.txt")];
+          }
+
+          return [];
+        },
+        lstatSync: (targetPath) => {
+          if (targetPath === missingPath) {
+            throw createErrnoError("ENOENT", "missing during scan");
+          }
+
+          if (targetPath === presentPath) {
+            return createStatLike();
+          }
+
+          throw createErrnoError("ENOENT", "unexpected path");
+        },
+        execFileSync: () => Buffer.from(""),
+        now: () => 1,
+      },
+    });
+
+    const manifest = engine.captureManifest();
+
+    assert.equal(manifest.statEntries.has("missing.txt"), false);
+    assert.equal(manifest.statEntries.has("present.txt"), true);
+  });
+
+  it("continues scanning when a subdirectory disappears before recursive read", () => {
+    const root = createTempWorkspace();
+    const missingDirectoryPath = path.join(root, "missing-dir");
+    const presentPath = path.join(root, "present.txt");
+    const engine = new HybridStateEngine(createConfig(root), {
+      gitAvailableHint: false,
+      adapter: {
+        readdirSync: (directoryPath) => {
+          if (directoryPath === root) {
+            return [createDirectoryEntry("missing-dir", "directory"), createDirectoryEntry("present.txt")];
+          }
+
+          if (directoryPath === missingDirectoryPath) {
+            throw createErrnoError("ENOENT", "directory removed before recursive read");
+          }
+
+          return [];
+        },
+        lstatSync: (targetPath) => {
+          if (targetPath === missingDirectoryPath) {
+            return createStatLike("directory");
+          }
+
+          if (targetPath === presentPath) {
+            return createStatLike();
+          }
+
+          throw createErrnoError("ENOENT", "unexpected path");
+        },
+        execFileSync: () => Buffer.from(""),
+        now: () => 1,
+      },
+    });
+
+    const manifest = engine.captureManifest();
+
+    assert.equal(manifest.statEntries.has("missing-dir"), true);
+    assert.equal(manifest.statEntries.has("present.txt"), true);
+  });
+
+  it("rethrows non-transient lstat errors during capture", () => {
+    const root = createTempWorkspace();
+    const blockedPath = path.join(root, "blocked.txt");
+    const engine = new HybridStateEngine(createConfig(root), {
+      gitAvailableHint: false,
+      adapter: {
+        readdirSync: (directoryPath) => {
+          if (directoryPath === root) {
+            return [createDirectoryEntry("blocked.txt")];
+          }
+
+          return [];
+        },
+        lstatSync: (targetPath) => {
+          if (targetPath === blockedPath) {
+            throw createErrnoError("EACCES", "permission denied");
+          }
+
+          throw createErrnoError("ENOENT", "unexpected path");
+        },
+        execFileSync: () => Buffer.from(""),
+        now: () => 1,
+      },
+    });
+
+    assert.throws(
+      () => engine.captureManifest(),
+      (error: unknown) => (error as NodeJS.ErrnoException).code === "EACCES",
+    );
   });
 
   it("skips ignored directories and files", () => {

@@ -107,10 +107,13 @@ decorators, no manual `track()` calls needed for normal agent operations.
 
 **Patched APIs:**
 - Sync: `writeFileSync`, `appendFileSync`, `renameSync`, `unlinkSync`,
-  `rmSync`, `mkdirSync`, `copyFileSync`
-- Callback: `writeFile`, `appendFile`, `rename`, `unlink`, `rm`, `mkdir`,
-  `copyFile`
-- Promise: `fs/promises.writeFile`, `fs/promises.appendFile`, etc.
+  `rmSync`, `mkdirSync`, `copyFileSync`, `chmodSync`, `utimesSync`
+- Callback: `writeFile`, `appendFile`, `write`, `writev`, `truncate`,
+  `symlink`, `link`, `fchmod`, `futimes`, `rename`, `unlink`, `rm`,
+  `mkdir`, `copyFile`, `chmod`, `utimes`
+- Promise: `fs/promises.writeFile`, `appendFile`, `truncate`, `symlink`,
+  `link`, `rename`, `unlink`, `rm`, `mkdir`, `copyFile`, `chmod`,
+  `utimes`
 - Streams: `createWriteStream`
 
 **Blindspots (why reconcile exists):**

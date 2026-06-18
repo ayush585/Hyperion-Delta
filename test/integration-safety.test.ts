@@ -54,9 +54,11 @@ function getWorkspaceCheckpoint(
 ): Checkpoint | undefined {
   return (
     workspace as unknown as {
-      getCheckpoint(checkpointId: CheckpointId): Checkpoint | undefined;
+      checkpointStore: {
+        getCheckpoint(checkpointId: CheckpointId): Checkpoint | undefined;
+      };
     }
-  ).getCheckpoint(checkpointId);
+  ).checkpointStore.getCheckpoint(checkpointId);
 }
 
 function commandAvailable(command: string, args: string[]): boolean {

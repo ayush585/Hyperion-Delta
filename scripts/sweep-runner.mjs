@@ -90,10 +90,7 @@ for (let i = 0; i < total; i++) {
 
     let parsed;
     try {
-      const stdout = child.stdout.trim();
-      const match = stdout.match(/\{[\s\S]*\}/);
-      if (!match) throw new Error("no JSON object in output");
-      parsed = JSON.parse(match[0]);
+      parsed = parseBenchmarkJsonOutput(child.stdout ?? "");
     } catch (err) {
       console.error(
         `[${i + 1}/${total}] dirty-count=${dirtyCount} files=${fileCount} iters=${iterations} ... ERROR (${err.message})`,
@@ -219,4 +216,103 @@ function speedupValue(git, manifest) {
   if (!git || git.skipped || !git.avgMs || git.avgMs <= 0) return "-";
   if (!manifest || manifest.skipped || !manifest.avgMs || manifest.avgMs <= 0) return "-";
   return `${(git.avgMs / manifest.avgMs).toFixed(2)}x`;
+}
+
+function parseBenchmarkJsonOutput(stdout) {
+  const trimmed = stdout.trim();
+
+  if (trimmed.length === 0) {
+    throw new Error("no benchmark output captured");
+  }
+
+  const direct = parseCandidateJson(trimmed);
+  if (isSweepResultPayload(direct)) {
+    return direct;
+  }
+
+  const candidates = [];
+  let startIndex = -1;
+  let depth = 0;
+  let inString = false;
+  let escapeNext = false;
+
+  for (let i = 0; i < trimmed.length; i += 1) {
+    const char = trimmed[i];
+
+    if (inString) {
+      if (escapeNext) {
+        escapeNext = false;
+        continue;
+      }
+
+      if (char === "\\") {
+        escapeNext = true;
+        continue;
+      }
+
+      if (char === '"') {
+        inString = false;
+      }
+
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{") {
+      if (depth === 0) {
+        startIndex = i;
+      }
+
+      depth += 1;
+      continue;
+    }
+
+    if (char !== "}" || depth === 0) {
+      continue;
+    }
+
+    depth -= 1;
+
+    if (depth !== 0 || startIndex < 0) {
+      continue;
+    }
+
+    const candidate = parseCandidateJson(trimmed.slice(startIndex, i + 1));
+    if (isSweepResultPayload(candidate)) {
+      candidates.push(candidate);
+    }
+
+    startIndex = -1;
+  }
+
+  if (candidates.length > 0) {
+    return candidates[candidates.length - 1];
+  }
+
+  throw new Error(`no valid benchmark JSON object in output: ${previewOutput(trimmed)}`);
+}
+
+function parseCandidateJson(candidate) {
+  try {
+    return JSON.parse(candidate);
+  } catch {
+    return undefined;
+  }
+}
+
+function isSweepResultPayload(value) {
+  return Boolean(value && typeof value === "object" && Array.isArray(value.runners));
+}
+
+function previewOutput(stdout) {
+  const normalized = stdout.replace(/\s+/g, " ").trim();
+  if (normalized.length <= 200) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, 200)}...`;
 }

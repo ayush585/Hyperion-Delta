@@ -34,6 +34,7 @@ import {
   type ReconcileResult,
   type StateManifest,
   type StorageStrategyKind,
+  type VfsMutationKind,
 } from "../src/index.js";
 
 describe("package exports", () => {
@@ -113,9 +114,10 @@ describe("package exports", () => {
       hardLinkCapable: true,
       blockCloneCandidate: false,
     };
+    const ignoredMutationKind: VfsMutationKind = "write";
     const ignoredWriteEvent: HyperionIgnoredWriteEvent = {
       relativePath: "node_modules/pkg/cache.json",
-      kind: "write",
+      kind: ignoredMutationKind,
       capturedAt: 1,
       action: "declared",
     };
@@ -148,7 +150,7 @@ describe("package exports", () => {
       checkpointId,
       outputs: [toolOutputPath, "node_modules/.cache/tool.json"],
     };
-    const execOptions: HyperionExecOptions = { captureOutput: true };
+    const execOptions: HyperionExecOptions = { captureOutput: true, timeoutMs: 1_000 };
     const execResult: HyperionExecResult = {
       command: "node",
       args: ["--version"],
@@ -197,6 +199,8 @@ describe("package exports", () => {
     assert.equal(promoteOptions.exportPatch, true);
     assert.equal(toolOutputContract.outputs.length, 2);
     assert.equal(execOptions.captureOutput, true);
+    assert.equal(execOptions.timeoutMs, 1_000);
+    assert.equal(ignoredMutationKind, "write");
     assert.equal(execResult.exitCode, 0);
     assert.equal(attemptResult.result, 1);
     assert.equal(promotionResult.storageCleaned, true);

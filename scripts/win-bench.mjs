@@ -6,6 +6,8 @@ import { platform } from "node:process";
 const FILE_COUNT = parseInt(process.env.HYPERION_FILE_COUNT ?? "25000", 10);
 const DIRTY_COUNT = parseInt(process.env.HYPERION_DIRTY_COUNT ?? "10", 10);
 const ITERATIONS = parseInt(process.env.HYPERION_ITERATIONS ?? "5", 10);
+const CLEANUP_ATTEMPTS = Math.max(parseInt(process.env.HYPERION_CLEANUP_ATTEMPTS ?? "5", 10) || 5, 1);
+const CLEANUP_RETRY_DELAY_MS = Math.max(parseInt(process.env.HYPERION_CLEANUP_RETRY_DELAY_MS ?? "50", 10) || 50, 0);
 
 const WORK_ROOT = join(process.env.HYPERION_WORK_ROOT ?? process.cwd(), ".hyperion_win_bench");
 const BASE_DIR = join(WORK_ROOT, "base");
@@ -23,10 +25,56 @@ function filePathFor(index, root) {
   return join(root, relativePathFor(index));
 }
 
-function safeRmDir(path) {
+function bestEffortRm(path) {
   if (existsSync(path)) {
-    try { rmSync(path, { recursive: true, force: true }); } catch { /* retry */ }
+    try { rmSync(path, { recursive: true, force: true }); } catch {}
   }
+}
+
+function waitMs(ms) {
+  if (ms <= 0) {
+    return;
+  }
+
+  const end = Date.now() + ms;
+  while (Date.now() < end) {}
+}
+
+function formatErrorCodeAndMessage(error) {
+  if (error && typeof error === "object") {
+    const code = typeof error.code === "string" ? error.code : "UNKNOWN";
+    const message = error instanceof Error ? error.message : String(error);
+    return `${code}:${message}`;
+  }
+
+  return "UNKNOWN:path still exists after cleanup retries";
+}
+
+function cleanupWithRetries(path, attempts = CLEANUP_ATTEMPTS) {
+  const totalAttempts = Math.max(attempts, 1);
+  let firstError = null;
+
+  for (let attempt = 1; attempt <= totalAttempts; attempt += 1) {
+    try {
+      rmSync(path, { recursive: true, force: true });
+    } catch (error) {
+      if (!firstError) {
+        firstError = error;
+      }
+    }
+
+    if (!existsSync(path)) {
+      return;
+    }
+
+    if (attempt < totalAttempts) {
+      waitMs(CLEANUP_RETRY_DELAY_MS);
+    }
+  }
+
+  throw new Error(
+    `Cleanup failed after retries: path=${path} attempts=${totalAttempts} originalError=${formatErrorCodeAndMessage(firstError)}`,
+  );
 }
 
 function timeNs(fn) {
@@ -37,8 +85,8 @@ function timeNs(fn) {
 
 // Synthesize
 console.error(`Synthesizing ${FILE_COUNT.toLocaleString()} TypeScript files...`);
-safeRmDir(WORK_ROOT);
-safeRmDir(BASE_DIR);
+cleanupWithRetries(WORK_ROOT);
+cleanupWithRetries(BASE_DIR);
 
 const synthMs = timeNs(() => {
   for (let i = 0; i < FILE_COUNT; i++) {
@@ -52,8 +100,22 @@ console.error(`Synthesis: ${synthMs.toFixed(0)}ms`);
 // Run Hyperion manifest rollback loops
 const samples = [];
 for (let iter = 0; iter < ITERATIONS; iter++) {
-  safeRmDir(WORK_DIR);
-  cpSync(BASE_DIR, WORK_DIR, { recursive: true });
+  const iterationNumber = iter + 1;
+
+  cleanupWithRetries(WORK_DIR);
+  if (existsSync(WORK_DIR)) {
+    throw new Error(
+      `Cleanup verification failed: path=${WORK_DIR} attempts=${CLEANUP_ATTEMPTS} originalError=UNKNOWN:work directory still exists`,
+    );
+  }
+
+  try {
+    cpSync(BASE_DIR, WORK_DIR, { recursive: true });
+  } catch (error) {
+    throw new Error(
+      `Workspace copy failed: iteration=${iterationNumber} from=${BASE_DIR} to=${WORK_DIR} originalError=${formatErrorCodeAndMessage(error)}`,
+    );
+  }
 
   const dirtyPaths = [];
   const scratchPaths = [];
@@ -71,7 +133,7 @@ for (let iter = 0; iter < ITERATIONS; iter++) {
 
   const rollbackMs = timeNs(() => {
     for (const sp of scratchPaths) {
-      safeRmDir(join(WORK_DIR, sp));
+      bestEffortRm(join(WORK_DIR, sp));
     }
     for (const rp of dirtyPaths) {
       const src = join(BASE_DIR, rp);
@@ -80,14 +142,14 @@ for (let iter = 0; iter < ITERATIONS; iter++) {
       cpSync(src, tmp);
       try { rmSync(dst, { force: true }); } catch {}
       cpSync(tmp, dst);
-      safeRmDir(tmp);
+      bestEffortRm(tmp);
     }
   });
 
   samples.push(rollbackMs);
 }
 
-safeRmDir(WORK_ROOT);
+cleanupWithRetries(WORK_ROOT);
 
 const avg = samples.reduce((a, b) => a + b, 0) / samples.length;
 const result = {

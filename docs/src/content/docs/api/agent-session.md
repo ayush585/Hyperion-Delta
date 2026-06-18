@@ -154,6 +154,7 @@ interface HyperionExecOptions {
   stdio?: StdioOptions;      // default: "inherit"
   rejectOnNonZero?: boolean; // default: true
   captureOutput?: boolean;   // default: false
+  timeoutMs?: number;        // default: 300000 (5 minutes), 0 disables timeout
 }
 ```
 
@@ -171,7 +172,7 @@ interface HyperionExecResult {
 ```
 
 Throws `HyperionExecError` when `rejectOnNonZero` is true and
-`exitCode !== 0`.
+`exitCode !== 0`. Throws `Error` when `timeoutMs` is exceeded.
 
 ### `snapshot()`
 

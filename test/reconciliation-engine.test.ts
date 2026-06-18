@@ -86,4 +86,42 @@ describe("ReconciliationEngine", () => {
     assert.equal(dirtyEntry?.firstSeenAt, 100);
     assert.equal(dirtyEntry?.after?.size, 3);
   });
+
+  it("reports deterministic one-to-one rename pairs", () => {
+    const baseline = createManifest([createEntry("before.txt", { size: 2, mtimeMs: 10 })]);
+    const checkpoint = createCheckpoint(baseline);
+    const engine = new ReconciliationEngine();
+
+    const result = engine.reconcile({
+      checkpoint,
+      currentManifest: createManifest([createEntry("after.txt", { size: 2, mtimeMs: 10 })]),
+    });
+
+    assert.deepEqual(result.created, []);
+    assert.deepEqual(result.deleted, []);
+    assert.deepEqual(result.renamed, [{ from: "before.txt", to: "after.txt" }]);
+    assert.equal(checkpoint.dirty.has("before.txt"), true);
+    assert.equal(checkpoint.dirty.has("after.txt"), true);
+  });
+
+  it("keeps ambiguous rename candidates as create plus delete", () => {
+    const baseline = createManifest([
+      createEntry("before-a.txt", { size: 3, mtimeMs: 11 }),
+      createEntry("before-b.txt", { size: 3, mtimeMs: 11 }),
+    ]);
+    const checkpoint = createCheckpoint(baseline);
+    const engine = new ReconciliationEngine();
+
+    const result = engine.reconcile({
+      checkpoint,
+      currentManifest: createManifest([
+        createEntry("after-a.txt", { size: 3, mtimeMs: 11 }),
+        createEntry("after-b.txt", { size: 3, mtimeMs: 11 }),
+      ]),
+    });
+
+    assert.deepEqual(result.renamed, []);
+    assert.deepEqual(result.created, ["after-a.txt", "after-b.txt"]);
+    assert.deepEqual(result.deleted, ["before-a.txt", "before-b.txt"]);
+  });
 });

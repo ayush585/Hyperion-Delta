@@ -34,7 +34,7 @@ interface HyperionConfig {
 | `ignoredPatterns` | `string[]` | `[]` | Additional glob patterns to ignore |
 | `overrideDefaultIgnores` | `boolean` | `false` | Replace default ignores instead of extending |
 | `enableFsInterceptor` | `boolean` | `true` | Auto-install VFS interception |
-| `maxConcurrentCheckpoints` | `number` | `32` | Max active checkpoints before capacity error |
+| `maxConcurrentCheckpoints` | `number` | `64` | Max active checkpoints before capacity error |
 | `sessionRoot` | `string` | `".hyperion/checkpoints"` | Checkpoint storage directory |
 | `useHotBuffer` | `boolean` | `true` | Enable in-memory small-file cache |
 | `hotBufferMaxFileBytes` | `number` | `262144` (256 KiB) | Max per-file size in buffer |
@@ -193,7 +193,7 @@ interface HyperionWindowsVolumeDiagnostics {
 ```ts
 interface HyperionIgnoredWriteEvent {
   relativePath: string;
-  kind: string;
+  kind: VfsMutationKind;
   capturedAt: number;
   action: "blocked" | "ignored" | "declared";
 }
@@ -291,6 +291,7 @@ interface HyperionExecOptions {
   stdio?: import("node:child_process").StdioOptions;
   rejectOnNonZero?: boolean;
   captureOutput?: boolean;
+  timeoutMs?: number;
 }
 ```
 
@@ -377,6 +378,8 @@ Thrown by `HyperionAgentSession.exec()` when `rejectOnNonZero` is `true`
 (default) and the child process exits with a non-zero code. Includes the
 full `HyperionExecResult`.
 
+When `timeoutMs` is exceeded, `exec()` rejects with a standard `Error`.
+
 ### `HyperionAttemptRollbackError extends Error`
 
 Thrown by `HyperionAgentSession.runAttempt()` on double-fault: the
@@ -389,7 +392,7 @@ attempt error and the rollback error for inspection.
 DEFAULT_HOT_BUFFER_MAX_FILE_BYTES   = 262144
 DEFAULT_HOT_BUFFER_MAX_TOTAL_BYTES  = 8388608
 DEFAULT_HOT_BUFFER_MAX_FILES        = 1024
-DEFAULT_MAX_CONCURRENT_CHECKPOINTS  = 32
+DEFAULT_MAX_CONCURRENT_CHECKPOINTS  = 64
 ```
 
 ## See also

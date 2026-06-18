@@ -43,14 +43,96 @@ export class ReconciliationEngine {
       }
     }
 
+    const renamePairs = detectRenamePairs(diff.created, diff.deleted);
+    const renamedCreatedPaths = new Set(renamePairs.map((pair) => pair.created.relativePath));
+    const renamedDeletedPaths = new Set(renamePairs.map((pair) => pair.deleted.relativePath));
+
     return {
       checkpointId: input.checkpoint.id,
-      created: diff.created.map((entry) => entry.relativePath),
+      created: diff.created
+        .filter((entry) => !renamedCreatedPaths.has(entry.relativePath))
+        .map((entry) => entry.relativePath),
       modified: [...diff.modified, ...diff.metadata].map((entry) => entry.relativePath),
-      deleted: diff.deleted.map((entry) => entry.relativePath),
-      renamed: [],
+      deleted: diff.deleted
+        .filter((entry) => !renamedDeletedPaths.has(entry.relativePath))
+        .map((entry) => entry.relativePath),
+      renamed: renamePairs.map((pair) => ({
+        from: pair.deleted.relativePath,
+        to: pair.created.relativePath,
+      })),
     };
   }
+}
+
+function detectRenamePairs(
+  createdEntries: ReadonlyArray<{ relativePath: string; after?: { type: string; size: number; mtimeMs: number; mode?: number } }>,
+  deletedEntries: ReadonlyArray<{ relativePath: string; before?: { type: string; size: number; mtimeMs: number; mode?: number } }>,
+): Array<{
+  created: { relativePath: string };
+  deleted: { relativePath: string };
+}> {
+  const createdBySignature = new Map<string, typeof createdEntries>();
+  const deletedBySignature = new Map<string, typeof deletedEntries>();
+
+  for (const createdEntry of createdEntries) {
+    const signature = statSignature(createdEntry.after);
+
+    if (!signature) {
+      continue;
+    }
+
+    const existing = createdBySignature.get(signature) ?? [];
+    createdBySignature.set(signature, [...existing, createdEntry]);
+  }
+
+  for (const deletedEntry of deletedEntries) {
+    const signature = statSignature(deletedEntry.before);
+
+    if (!signature) {
+      continue;
+    }
+
+    const existing = deletedBySignature.get(signature) ?? [];
+    deletedBySignature.set(signature, [...existing, deletedEntry]);
+  }
+
+  const renamePairs: Array<{
+    created: { relativePath: string };
+    deleted: { relativePath: string };
+  }> = [];
+
+  for (const [signature, createdCandidates] of createdBySignature) {
+    const deletedCandidates = deletedBySignature.get(signature);
+
+    if (!deletedCandidates || createdCandidates.length !== 1 || deletedCandidates.length !== 1) {
+      continue;
+    }
+
+    const createdCandidate = createdCandidates[0];
+    const deletedCandidate = deletedCandidates[0];
+
+    if (!createdCandidate || !deletedCandidate) {
+      continue;
+    }
+
+    renamePairs.push({
+      created: createdCandidate,
+      deleted: deletedCandidate,
+    });
+  }
+
+  return renamePairs.sort((first, second) =>
+    first.deleted.relativePath.localeCompare(second.deleted.relativePath) ||
+    first.created.relativePath.localeCompare(second.created.relativePath),
+  );
+}
+
+function statSignature(entry: { type: string; size: number; mtimeMs: number; mode?: number } | undefined): string | undefined {
+  if (!entry) {
+    return undefined;
+  }
+
+  return `${entry.type}|${entry.size}|${entry.mtimeMs}|${entry.mode ?? -1}`;
 }
 
 function isPathAtBaseline(

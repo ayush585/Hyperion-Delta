@@ -9,7 +9,7 @@ on:
       tag:
         description: "Git tag or ref to publish"
         required: true
-        default: "main"
+        default: "refs/heads/main"
 
 permissions:
   contents: read
@@ -21,6 +21,14 @@ jobs:
     runs-on: ubuntu-latest
     environment: npm-publish
     steps:
+      - name: Guard manual publish branch
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Manual publish workflow_dispatch is allowed only from refs/heads/main (current: $GITHUB_REF)"
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@v4
         with:

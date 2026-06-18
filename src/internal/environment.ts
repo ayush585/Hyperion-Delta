@@ -236,13 +236,36 @@ function detectSameDevice(
   adapter: EnvironmentProbeAdapter,
 ): boolean {
   try {
-    if (!adapter.existsSync(sessionRoot)) {
+    const sessionProbePath = resolveExistingPathForStat(sessionRoot, adapter);
+
+    if (!sessionProbePath) {
       return false;
     }
 
-    return adapter.statSync(workspaceRoot).dev === adapter.statSync(sessionRoot).dev;
+    return adapter.statSync(workspaceRoot).dev === adapter.statSync(sessionProbePath).dev;
   } catch {
     return false;
+  }
+}
+
+function resolveExistingPathForStat(
+  candidatePath: string,
+  adapter: EnvironmentProbeAdapter,
+): string | undefined {
+  let currentPath = candidatePath;
+
+  while (true) {
+    if (adapter.existsSync(currentPath)) {
+      return currentPath;
+    }
+
+    const parentPath = path.dirname(currentPath);
+
+    if (parentPath === currentPath) {
+      return undefined;
+    }
+
+    currentPath = parentPath;
   }
 }
 

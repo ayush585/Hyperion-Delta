@@ -136,6 +136,30 @@ describe("environment discovery", () => {
     assert.equal(profile.sameDeviceForLinks, false);
   });
 
+  it("treats a missing session root as same-device when its existing parent matches", () => {
+    const profile = discoverEnvironmentProfile(
+      { workspaceRoot: "workspace", sessionRoot: "workspace/.hyperion/checkpoints" },
+      createAdapter({
+        existsSync: (path) => path === "workspace",
+        statSync: () => ({ dev: 10 }),
+      }),
+    );
+
+    assert.equal(profile.sameDeviceForLinks, true);
+  });
+
+  it("detects cross-device risk from an existing session-root parent", () => {
+    const profile = discoverEnvironmentProfile(
+      { workspaceRoot: "workspace", sessionRoot: "workspace/.hyperion/checkpoints" },
+      createAdapter({
+        existsSync: (path) => path === "workspace" || path === "workspace/.hyperion",
+        statSync: (path) => ({ dev: path === "workspace" ? 10 : 20 }),
+      }),
+    );
+
+    assert.equal(profile.sameDeviceForLinks, false);
+  });
+
   it("reports deterministic case-sensitivity defaults by platform", () => {
     const windowsProfile = discoverEnvironmentProfile(
       { workspaceRoot: "workspace", sessionRoot: "session" },
@@ -350,11 +374,11 @@ describe("strategy selector", () => {
   it("selects Tier 2 on Linux or macOS when links are safe", () => {
     const linuxSelection = selectStorageStrategy(
       createConfig({ useTmpfs: false }),
-      createProfile({ platform: "linux", hasRsync: true, sameDeviceForLinks: true }),
+      createProfile({ platform: "linux", hasRsync: false, sameDeviceForLinks: true }),
     );
     const macSelection = selectStorageStrategy(
       createConfig(),
-      createProfile({ platform: "darwin", hasRsync: true, sameDeviceForLinks: true }),
+      createProfile({ platform: "darwin", hasRsync: false, sameDeviceForLinks: true }),
     );
 
     assert.equal(linuxSelection.kind, "posix-link");
@@ -364,13 +388,13 @@ describe("strategy selector", () => {
   it("skips Tier 2 when device IDs differ or are unknown", () => {
     const crossDevice = selectStorageStrategy(
       createConfig({ useTmpfs: false }),
-      createProfile({ platform: "linux", hasRsync: true, sameDeviceForLinks: false }),
+      createProfile({ platform: "linux", hasRsync: false, sameDeviceForLinks: false }),
     );
     const missingSessionRootProfile = discoverEnvironmentProfile(
       { workspaceRoot: "workspace", sessionRoot: "session" },
       createAdapter({
         platform: "darwin",
-        existsSync: (path) => path !== "session",
+        existsSync: (path) => path === "workspace",
       }),
     );
     const missingSessionRoot = selectStorageStrategy(createConfig(), missingSessionRootProfile);
@@ -380,13 +404,13 @@ describe("strategy selector", () => {
     assert.equal(missingSessionRoot.kind, "pure-manifest");
   });
 
-  it("falls back to Tier 3 when rsync is unavailable", () => {
+  it("does not require rsync for Tier 2 when links are safe", () => {
     const selection = selectStorageStrategy(
       createConfig({ useTmpfs: false }),
       createProfile({ platform: "linux", hasRsync: false, sameDeviceForLinks: true }),
     );
 
-    assert.equal(selection.kind, "pure-manifest");
-    assert.equal(selection.reason, "rsync-unavailable");
+    assert.equal(selection.kind, "posix-link");
+    assert.equal(selection.reason, "posix-links-available");
   });
 });

@@ -141,7 +141,7 @@ Environment Discovery
 Strategy Router
         |
         +--> Tier 1: Linux/WSL2 tmpfs dirty-set cache
-        +--> Tier 2: macOS/Linux hard-link or rsync-backed cache
+        +--> Tier 2: macOS/Linux hard-link-backed cache
         +--> Tier 3: pure Node manifest cache
         |
         | 3. install fs interceptor
@@ -224,7 +224,7 @@ interface StorageStrategy {
 Selection order:
 
 1. `TmpfsDirtySetStrategy` on Linux/WSL2 when `/dev/shm` is writable and `useTmpfs !== false`.
-2. `PosixLinkStrategy` on macOS/Linux when hard links or `rsync --link-dest` are available and `fs.statSync(workspaceRoot).dev === fs.statSync(sessionRoot).dev`.
+2. `PosixLinkStrategy` on macOS/Linux when `fs.statSync(workspaceRoot).dev === fs.statSync(sessionRoot).dev`.
 3. `PureManifestStrategy` everywhere else, including Windows/NTFS.
 
 The strategy must never expose raw shell commands to agent code.
@@ -358,11 +358,11 @@ This provides memory-speed restore for dirty files while avoiding `/dev/shm` exh
 
 #### Tier 2: Posix Link Strategy
 
-Use hard links or `rsync --link-dest` to create cheap dirty-set backups on macOS/Linux when tmpfs is unavailable.
+Use hard links to create cheap dirty-set backups on macOS/Linux when tmpfs is unavailable. If hard-link setup fails at runtime, the strategy falls back to copy semantics for that and subsequent backup paths.
 
 This strategy still operates only on dirty files. It must not full-clone the workspace during rollback.
 
-Tier 2 is allowed only when the workspace and checkpoint storage live on the same device. The implementation must validate `fs.statSync(workspaceRoot).dev === fs.statSync(sessionRoot).dev` during strategy selection. If this check fails, hard-link and link-dest behavior can throw `EXDEV`; the selector must skip Tier 2 and use `PureManifestStrategy`.
+Tier 2 is allowed only when the workspace and checkpoint storage live on the same device. The implementation must validate `fs.statSync(workspaceRoot).dev === fs.statSync(sessionRoot).dev` during strategy selection. If this check fails, hard-link behavior can throw `EXDEV`; the selector must skip Tier 2 and use `PureManifestStrategy`.
 
 #### Tier 3: Pure Manifest Strategy
 
@@ -421,12 +421,13 @@ The VFS Interceptor is v1 default. It monkey-patches Node mutation APIs in both 
 
 Intercepted classes:
 
-- write: `writeFile`, `appendFile`, `createWriteStream`
-- delete: `unlink`, `rm`, `rmdir`
+- write: `writeFile`, `appendFile`, `write`, `writev`, `truncate`, `createWriteStream`
+- delete: `unlink`, `rm`
 - move: `rename`
-- copy: `copyFile`, `cp`
-- directory create: `mkdir`, `mkdtemp`
-- metadata: `chmod`, `chown`, `utimes`
+- copy: `copyFile`
+- links: `symlink`, `link`
+- directory create: `mkdir`
+- metadata: `chmod`, `fchmod`, `utimes`, `futimes`
 
 The interceptor records the path before executing the original operation. For renames, it records both source and destination.
 
@@ -612,13 +613,13 @@ Rollback first attempts permission repair for files inside Hyperion namespaces. 
 
 The engine falls back to stat-only filesystem manifests with default ignores. Correctness remains, startup may be slower on very large non-Git workspaces.
 
-### Rsync Unavailable
+### Rsync Unavailable (Benchmark Tooling)
 
-The selector skips Tier 2 rsync mode and uses pure Node targeted manifest restore. No public API changes.
+Benchmark rows that invoke `rsync` are skipped when `rsync` is missing. SDK runtime strategy selection is unaffected.
 
 ### Cross-Device Link Failure
 
-Hard links and link-dest style storage cannot cross physical device boundaries. If `workspaceRoot` and `sessionRoot` have different `fs.statSync().dev` values, Tier 2 can fail with `EXDEV`. The default `sessionRoot` is `.hyperion/checkpoints/` inside the workspace to prevent this. If a configured `sessionRoot` is on another device, Strategy Selector must skip `PosixLinkStrategy` and degrade to `PureManifestStrategy`.
+Hard-link storage cannot cross physical device boundaries. If `workspaceRoot` and `sessionRoot` have different `fs.statSync().dev` values, Tier 2 can fail with `EXDEV`. The default `sessionRoot` is `.hyperion/checkpoints/` inside the workspace to prevent this. If a configured `sessionRoot` is on another device, Strategy Selector must skip `PosixLinkStrategy` and degrade to `PureManifestStrategy`.
 
 ### Tmpfs Unavailable Or Too Small
 
@@ -647,7 +648,7 @@ Each checkpoint has isolated namespace and manifest state. Path-level rollback l
 ### Phase 2: Strategy Acceleration
 
 - Tmpfs dirty-set cache.
-- POSIX hard-link and rsync-backed strategy.
+- POSIX hard-link strategy with safe copy fallback.
 - Environment diagnostics.
 - Strategy selection test matrix across Linux, WSL2, macOS, and Windows.
 

@@ -1,4 +1,4 @@
-import { spawn, type StdioOptions } from "node:child_process";
+import { spawn, type ChildProcess, type StdioOptions } from "node:child_process";
 
 import { HyperionWorkspace } from "./workspace.js";
 import type {
@@ -28,7 +28,10 @@ export interface HyperionExecOptions {
   stdio?: StdioOptions;
   rejectOnNonZero?: boolean;
   captureOutput?: boolean;
+  timeoutMs?: number;
 }
+
+const DEFAULT_EXEC_TIMEOUT_MS = 5 * 60 * 1000;
 
 export interface HyperionAttemptContext {
   checkpointId: CheckpointId;
@@ -273,12 +276,34 @@ export class HyperionAgentSession {
     return new Promise((resolve, reject) => {
       const stdoutChunks: Buffer[] = [];
       const stderrChunks: Buffer[] = [];
+      const timeoutMs = resolveExecTimeoutMs(options.timeoutMs);
       const child = spawn(command, args, {
         cwd: options.cwd ?? this.workspace.root,
         env: options.env,
         shell: false,
         stdio: options.captureOutput ? ["ignore", "pipe", "pipe"] : (options.stdio ?? "inherit"),
       });
+      let settled = false;
+      let timeoutHandle: NodeJS.Timeout | undefined;
+
+      const clearTimeouts = () => {
+        if (timeoutHandle) {
+          clearTimeout(timeoutHandle);
+          timeoutHandle = undefined;
+        }
+      };
+
+      const settle = (handler: () => void): void => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        clearTimeouts();
+        child.removeListener("error", onError);
+        child.removeListener("close", onClose);
+        handler();
+      };
 
       if (options.captureOutput) {
         child.stdout?.on("data", (chunk: Buffer) => {
@@ -289,9 +314,17 @@ export class HyperionAgentSession {
         });
       }
 
-      child.once("error", reject);
+      const onError = (error: unknown) => {
+        settle(() => reject(error));
+      };
 
-      child.once("close", async (exitCode, signal) => {
+      const onClose = async (exitCode: number | null, signal: NodeJS.Signals | null) => {
+        if (settled) {
+          return;
+        }
+
+        clearTimeouts();
+
         const result: HyperionExecResult = {
           command,
           args: [...args],
@@ -310,17 +343,59 @@ export class HyperionAgentSession {
           }
 
           if ((options.rejectOnNonZero ?? true) && exitCode !== 0) {
-            reject(new HyperionExecError(result));
+            settle(() => reject(new HyperionExecError(result)));
             return;
           }
 
-          resolve(result);
+          settle(() => resolve(result));
         } catch (error) {
-          reject(error);
+          settle(() => reject(error));
         }
-      });
+      };
+
+      child.once("error", onError);
+      child.once("close", onClose);
+
+      if (timeoutMs !== undefined) {
+        timeoutHandle = setTimeout(() => {
+          if (settled) {
+            return;
+          }
+
+          terminateChildProcess(child);
+
+          settle(() => reject(new Error(`Command timed out after ${timeoutMs}ms: ${command}`)));
+        }, timeoutMs);
+        timeoutHandle.unref?.();
+      }
     });
   }
+}
+
+function resolveExecTimeoutMs(timeoutMs: number | undefined): number | undefined {
+  if (timeoutMs === undefined) {
+    return DEFAULT_EXEC_TIMEOUT_MS;
+  }
+
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
+    throw new Error(`timeoutMs must be a non-negative finite number: ${timeoutMs}`);
+  }
+
+  if (timeoutMs === 0) {
+    return undefined;
+  }
+
+  return Math.floor(timeoutMs);
+}
+
+function terminateChildProcess(child: ChildProcess, signal?: NodeJS.Signals): void {
+  try {
+    if (signal) {
+      child.kill(signal);
+    } else {
+      child.kill();
+    }
+  } catch {}
 }
 
 function annotateAttemptError(

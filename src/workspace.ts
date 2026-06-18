@@ -218,9 +218,10 @@ export class HyperionWorkspace {
       baseline,
       deviceId: deviceInfo.workspaceDeviceId,
     });
-    this.checkpointStorage.set(
-      checkpoint.id,
-      createCheckpointStorage({
+    let storage: StorageStrategy | undefined;
+
+    try {
+      storage = createCheckpointStorage({
         workspaceRoot: this.root,
         selectedKind: this.strategySelection.kind,
         checkpointNamespace: checkpoint.storageNamespace,
@@ -229,12 +230,24 @@ export class HyperionWorkspace {
         useHotBuffer: this.config.useHotBuffer,
         hotBufferMaxFileBytes: this.config.hotBufferMaxFileBytes,
         hotBufferMaxTotalBytes: this.config.hotBufferMaxTotalBytes,
-      hotBufferMaxFiles: this.config.hotBufferMaxFiles,
-      }),
-    );
-    this.writeAttemptJournal(checkpoint);
+        hotBufferMaxFiles: this.config.hotBufferMaxFiles,
+      });
+      this.checkpointStorage.set(checkpoint.id, storage);
+      this.writeAttemptJournal(checkpoint);
 
-    return checkpoint.id;
+      return checkpoint.id;
+    } catch (error) {
+      try {
+        storage?.cleanup?.();
+      } catch {
+        // Snapshot rollback cleanup is best-effort.
+      }
+
+      this.checkpointStorage.delete(checkpoint.id);
+      this.checkpointToolOutputDeclarations.delete(checkpoint.id);
+      this.checkpointStore.deleteCheckpoint(checkpoint.id);
+      throw error;
+    }
   }
 
   public async rollback(checkpointId: CheckpointId): Promise<void> {
@@ -549,18 +562,6 @@ export class HyperionWorkspace {
     return { ...windowsVolume };
   }
 
-  private getCheckpoint(checkpointId: CheckpointId) {
-    return this.checkpointStore.getCheckpoint(checkpointId);
-  }
-
-  private markCheckpointDisposed(checkpointId: CheckpointId): void {
-    this.checkpointStore.markCheckpointDisposed(checkpointId);
-    const checkpoint = this.checkpointStore.getCheckpoint(checkpointId);
-    if (checkpoint) {
-      this.writeAttemptJournalBestEffort(checkpoint);
-    }
-  }
-
   private createCheckpointDiagnostics(
     checkpoint: StoredCheckpoint,
   ): HyperionCheckpointDiagnostics {
@@ -681,13 +682,6 @@ export class HyperionWorkspace {
     return checkpoint
       ? this.getCheckpointToolOutputDeclarations(checkpoint.id).has(relativePath)
       : false;
-  }
-
-  private backupCheckpointPath(checkpointId: CheckpointId, pathOrPathLike: string): void {
-    this.requireKnownCheckpoint(checkpointId);
-    const storage = this.requireCheckpointStorage(checkpointId);
-    storage.backupFile(pathOrPathLike);
-    this.writeBackupManifestBestEffort(checkpointId, storage);
   }
 
   private recordVfsMutations(records: VfsMutationRecord[]): void {

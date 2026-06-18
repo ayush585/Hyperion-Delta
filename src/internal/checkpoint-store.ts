@@ -100,6 +100,10 @@ export class CheckpointStore {
     return this.checkpoints.get(checkpointId);
   }
 
+  public deleteCheckpoint(checkpointId: CheckpointId): boolean {
+    return this.checkpoints.delete(checkpointId);
+  }
+
   public getCheckpoints(): StoredCheckpoint[] {
     return [...this.checkpoints.values()];
   }
@@ -109,7 +113,9 @@ export class CheckpointStore {
 
     for (const checkpoint of this.checkpoints.values()) {
       if (checkpoint.status === "active" || checkpoint.status === "rolling-back") {
-        mostRecentCheckpoint = checkpoint;
+        if (!mostRecentCheckpoint || checkpoint.createdAt >= mostRecentCheckpoint.createdAt) {
+          mostRecentCheckpoint = checkpoint;
+        }
       }
     }
 

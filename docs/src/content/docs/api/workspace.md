@@ -226,7 +226,7 @@ Windows volume, checkpoint, and ignored-write diagnostics.
 const diag = workspace.getDiagnostics();
 console.log(diag.strategy);
 console.log(diag.windowsVolume?.fileSystemName);
-console.log(diag.checkpoints[0]?.storage?.hotBuffer?.hits);
+console.log(diag.checkpoints[0]?.storage?.hotBuffer?.memoryHits);
 ```
 
 Does not run Git, shell commands, or filesystem scans. The returned
@@ -317,7 +317,7 @@ workspace.uninstallFsInterceptor();
 DEFAULT_HOT_BUFFER_MAX_FILE_BYTES  = 262144   // 256 KiB
 DEFAULT_HOT_BUFFER_MAX_TOTAL_BYTES  = 8388608   // 8 MiB
 DEFAULT_HOT_BUFFER_MAX_FILES       = 1024
-DEFAULT_MAX_CONCURRENT_CHECKPOINTS  = 32
+DEFAULT_MAX_CONCURRENT_CHECKPOINTS  = 64
 ```
 
 ## See also

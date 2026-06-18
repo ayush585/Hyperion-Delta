@@ -130,12 +130,26 @@ export class HybridStateEngine {
 
   private captureStatLedger(): Map<string, StatLedgerEntry> {
     const statEntries = new Map<string, StatLedgerEntry>();
-    this.walkDirectory(this.workspaceRoot, statEntries);
+    this.walkDirectory(this.workspaceRoot, statEntries, false);
     return statEntries;
   }
 
-  private walkDirectory(directoryPath: string, statEntries: Map<string, StatLedgerEntry>): void {
-    const entries = this.adapter.readdirSync(directoryPath, { withFileTypes: true });
+  private walkDirectory(
+    directoryPath: string,
+    statEntries: Map<string, StatLedgerEntry>,
+    treatMissingDirectoryAsRace: boolean,
+  ): void {
+    let entries: DirectoryEntryLike[];
+
+    try {
+      entries = this.adapter.readdirSync(directoryPath, { withFileTypes: true });
+    } catch (error) {
+      if (treatMissingDirectoryAsRace && isTransientPathRaceError(error)) {
+        return;
+      }
+
+      throw error;
+    }
 
     for (const entry of entries) {
       const absolutePath = path.join(directoryPath, entry.name);
@@ -145,11 +159,22 @@ export class HybridStateEngine {
         continue;
       }
 
-      const stat = this.adapter.lstatSync(absolutePath);
+      let stat: StatLike;
+
+      try {
+        stat = this.adapter.lstatSync(absolutePath);
+      } catch (error) {
+        if (isTransientPathRaceError(error)) {
+          continue;
+        }
+
+        throw error;
+      }
+
       statEntries.set(relativePath, createStatLedgerEntry(relativePath, stat));
 
       if (stat.isDirectory() && !stat.isSymbolicLink()) {
-        this.walkDirectory(absolutePath, statEntries);
+        this.walkDirectory(absolutePath, statEntries, true);
       }
     }
   }
@@ -243,6 +268,12 @@ function createStatLedgerEntry(relativePath: string, stat: StatLike): StatLedger
     mtimeMs: stat.mtimeMs,
     mode: stat.mode,
   };
+}
+
+function isTransientPathRaceError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+
+  return code === "ENOENT" || code === "ENOTDIR";
 }
 
 function statType(stat: StatLike): StatLedgerEntry["type"] {

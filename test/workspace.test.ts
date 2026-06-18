@@ -164,20 +164,31 @@ function getWorkspaceCheckpoint(
 ): Checkpoint | undefined {
   return (
     workspace as unknown as {
-      getCheckpoint(checkpointId: CheckpointId): Checkpoint | undefined;
+      checkpointStore: {
+        getCheckpoint(checkpointId: CheckpointId): Checkpoint | undefined;
+      };
     }
-  ).getCheckpoint(checkpointId);
+  ).checkpointStore.getCheckpoint(checkpointId);
 }
 
 function markWorkspaceCheckpointDisposed(
   workspace: HyperionWorkspace,
   checkpointId: CheckpointId,
 ): void {
-  (
-    workspace as unknown as {
+  const target = workspace as unknown as {
+    checkpointStore: {
       markCheckpointDisposed(checkpointId: CheckpointId): void;
-    }
-  ).markCheckpointDisposed(checkpointId);
+      getCheckpoint(checkpointId: CheckpointId): Checkpoint | undefined;
+    };
+    writeAttemptJournalBestEffort(checkpoint: Checkpoint): void;
+  };
+
+  target.checkpointStore.markCheckpointDisposed(checkpointId);
+  const checkpoint = target.checkpointStore.getCheckpoint(checkpointId);
+
+  if (checkpoint) {
+    target.writeAttemptJournalBestEffort(checkpoint);
+  }
 }
 
 function getActiveCheckpointCount(workspace: HyperionWorkspace): number {
@@ -193,11 +204,27 @@ function backupWorkspaceCheckpointPath(
   checkpointId: CheckpointId,
   pathOrPathLike: string,
 ): void {
-  (
-    workspace as unknown as {
-      backupCheckpointPath(checkpointId: CheckpointId, pathOrPathLike: string): void;
-    }
-  ).backupCheckpointPath(checkpointId, pathOrPathLike);
+  const target = workspace as unknown as {
+    checkpointStore: {
+      getCheckpoint(checkpointId: CheckpointId): Checkpoint | undefined;
+    };
+    checkpointStorage: Map<CheckpointId, StorageStrategy>;
+    writeBackupManifestBestEffort(checkpointId: CheckpointId, storage: StorageStrategy): void;
+  };
+  const checkpoint = target.checkpointStore.getCheckpoint(checkpointId);
+
+  if (!checkpoint) {
+    throw new HyperionRollbackError(`Unknown checkpoint: ${checkpointId}`);
+  }
+
+  const storage = target.checkpointStorage.get(checkpointId);
+
+  if (!storage) {
+    throw new HyperionRollbackError(`Missing storage for checkpoint: ${checkpointId}`);
+  }
+
+  storage.backupFile(pathOrPathLike);
+  target.writeBackupManifestBestEffort(checkpointId, storage);
 }
 
 function replaceWorkspaceCheckpointStorage(
@@ -221,6 +248,36 @@ function getWorkspaceCheckpointStorage(
       checkpointStorage: Map<CheckpointId, StorageStrategy>;
     }
   ).checkpointStorage.get(checkpointId);
+}
+
+function getWorkspaceCheckpointStorageSize(workspace: HyperionWorkspace): number {
+  return (
+    workspace as unknown as {
+      checkpointStorage: Map<CheckpointId, StorageStrategy>;
+    }
+  ).checkpointStorage.size;
+}
+
+function injectWorkspaceCheckpointStorageSetFailureOnce(
+  workspace: HyperionWorkspace,
+  message: string,
+): void {
+  const checkpointStorage = (
+    workspace as unknown as {
+      checkpointStorage: Map<CheckpointId, StorageStrategy>;
+    }
+  ).checkpointStorage;
+  const originalSet = checkpointStorage.set.bind(checkpointStorage);
+  let hasThrown = false;
+
+  checkpointStorage.set = ((checkpointId: CheckpointId, storage: StorageStrategy) => {
+    if (!hasThrown) {
+      hasThrown = true;
+      throw new Error(message);
+    }
+
+    return originalSet(checkpointId, storage);
+  }) as typeof checkpointStorage.set;
 }
 
 function getWorkspaceSessionDirectory(workspace: HyperionWorkspace): string {
@@ -385,8 +442,9 @@ describe("HyperionWorkspace", () => {
   });
 
   it("resolves Hot Dirty Buffer defaults and custom bounds", () => {
-    const root = createTempWorkspace();
-    const defaultWorkspace = new HyperionWorkspace(root);
+    const defaultRoot = createTempWorkspace();
+    const customRoot = createTempWorkspace();
+    const defaultWorkspace = new HyperionWorkspace(defaultRoot);
 
     assert.equal(defaultWorkspace.config.useHotBuffer, true);
     assert.equal(defaultWorkspace.config.hotBufferMaxFileBytes, DEFAULT_HOT_BUFFER_MAX_FILE_BYTES);
@@ -394,7 +452,7 @@ describe("HyperionWorkspace", () => {
     assert.equal(defaultWorkspace.config.hotBufferMaxFiles, DEFAULT_HOT_BUFFER_MAX_FILES);
 
     const customWorkspace = new HyperionWorkspace({
-      workspaceRoot: root,
+      workspaceRoot: customRoot,
       useHotBuffer: false,
       hotBufferMaxFileBytes: 16,
       hotBufferMaxTotalBytes: 32,
@@ -408,10 +466,11 @@ describe("HyperionWorkspace", () => {
   });
 
   it("resolves strict ignored-write defaults and custom config", () => {
-    const root = createTempWorkspace();
-    const defaultWorkspace = new HyperionWorkspace(root);
+    const defaultRoot = createTempWorkspace();
+    const strictRoot = createTempWorkspace();
+    const defaultWorkspace = new HyperionWorkspace(defaultRoot);
     const strictWorkspace = new HyperionWorkspace({
-      workspaceRoot: root,
+      workspaceRoot: strictRoot,
       strictIgnoredWrites: true,
     });
 
@@ -420,10 +479,11 @@ describe("HyperionWorkspace", () => {
   });
 
   it("resolves durable attempt journal defaults and custom config", () => {
-    const root = createTempWorkspace();
-    const defaultWorkspace = new HyperionWorkspace(root);
+    const defaultRoot = createTempWorkspace();
+    const disabledRoot = createTempWorkspace();
+    const defaultWorkspace = new HyperionWorkspace(defaultRoot);
     const disabledWorkspace = new HyperionWorkspace({
-      workspaceRoot: root,
+      workspaceRoot: disabledRoot,
       durableAttemptJournals: false,
     });
 
@@ -518,6 +578,7 @@ describe("HyperionWorkspace", () => {
     assert.throws(() => normalizeWorkspacePath(root, "../outside.ts"), HyperionPathError);
     assert.throws(() => normalizeWorkspacePath(root, "C:drive-relative.ts"), HyperionPathError);
     assert.throws(() => normalizeWorkspacePath(root, outsidePath), HyperionPathError);
+    assert.throws(() => normalizeWorkspacePath(root, "src\u0000index.ts"), HyperionPathError);
     assert.throws(() => new HyperionWorkspace({ workspaceRoot: root, sessionRoot: "../outside" }), HyperionPathError);
   });
 
@@ -546,6 +607,8 @@ describe("HyperionWorkspace", () => {
       ".hyperion/checkpoints/session/manifest.json",
       "dist/output.js",
     ]);
+
+    assert.throws(() => workspace.track("src\u0000index.ts"), HyperionPathError);
   });
 
   it("allows exact ignored paths to be tracked explicitly", () => {
@@ -590,6 +653,10 @@ describe("HyperionWorkspace", () => {
     );
     assert.throws(
       () => workspace.declareToolOutputs({ toolName: "npm", outputs: ["../outside.txt"] }),
+      HyperionPathError,
+    );
+    assert.throws(
+      () => workspace.declareToolOutputs({ toolName: "npm", outputs: ["dist\u0000file.js"] }),
       HyperionPathError,
     );
   });
@@ -899,6 +966,24 @@ describe("HyperionWorkspace", () => {
     assert.equal(existsSync(filePath), true);
     assert.equal(existsSync(join(root, ".hyperion", "checkpoints")), true);
     assert.equal(existsSync(join(root, "source.ts", "unexpected")), false);
+  });
+
+  it("does not leave orphaned active checkpoints when snapshot setup throws", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace({
+      workspaceRoot: root,
+      maxConcurrentCheckpoints: 1,
+    });
+
+    injectWorkspaceCheckpointStorageSetFailureOnce(workspace, "injected snapshot setup failure");
+    await assert.rejects(() => workspace.snapshot(), /injected snapshot setup failure/);
+
+    assert.equal(getActiveCheckpointCount(workspace), 0);
+    assert.equal(getWorkspaceCheckpointStorageSize(workspace), 0);
+
+    const checkpointId = await workspace.snapshot();
+    assert.ok(getWorkspaceCheckpoint(workspace, checkpointId));
+    assert.ok(getWorkspaceCheckpointStorage(workspace, checkpointId));
   });
 
   it("supports concurrent active checkpoints with isolated maps and namespaces", async () => {
@@ -1244,6 +1329,48 @@ describe("HyperionWorkspace", () => {
     assert.equal(result.created.includes("latest-created.txt"), true);
     assert.equal(getWorkspaceCheckpoint(workspace, firstId)?.dirty.has("latest-created.txt"), false);
     assert.equal(getWorkspaceCheckpoint(workspace, secondId)?.dirty.has("latest-created.txt"), true);
+  });
+
+  it("reconciles against newest createdAt when rehydrated checkpoints are restored out of order", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const firstId = await workspace.snapshot();
+    const secondId = await workspace.snapshot();
+    const firstJournalPath = getWorkspaceJournalPath(root, firstId);
+    const secondJournalPath = getWorkspaceJournalPath(root, secondId);
+    const firstJournal = JSON.parse(readFileSync(firstJournalPath, "utf8")) as {
+      createdAt: number;
+      updatedAt: number;
+    };
+    const secondJournal = JSON.parse(readFileSync(secondJournalPath, "utf8")) as {
+      createdAt: number;
+      updatedAt: number;
+    };
+
+    firstJournal.createdAt = 10;
+    firstJournal.updatedAt = Math.max(firstJournal.updatedAt, 10);
+    secondJournal.createdAt = 20;
+    secondJournal.updatedAt = Math.max(secondJournal.updatedAt, 20);
+
+    writeFileSync(firstJournalPath, JSON.stringify(firstJournal, null, 2));
+    writeFileSync(secondJournalPath, JSON.stringify(secondJournal, null, 2));
+
+    const freshWorkspace = new HyperionWorkspace(root);
+    await freshWorkspace.rehydrateAttempt(secondId);
+    await freshWorkspace.rehydrateAttempt(firstId);
+
+    writeFileSync(join(root, "rehydrated-most-recent.txt"), "created");
+    const result = await freshWorkspace.reconcile();
+
+    assert.equal(result.checkpointId, secondId);
+    assert.equal(
+      getWorkspaceCheckpoint(freshWorkspace, firstId)?.dirty.has("rehydrated-most-recent.txt"),
+      false,
+    );
+    assert.equal(
+      getWorkspaceCheckpoint(freshWorkspace, secondId)?.dirty.has("rehydrated-most-recent.txt"),
+      true,
+    );
   });
 
   it("keeps reconciliation idempotent for repeated captures", async () => {

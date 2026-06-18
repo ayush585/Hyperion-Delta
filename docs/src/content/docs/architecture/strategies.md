@@ -113,7 +113,7 @@ Hot Dirty Buffer hit/spill counters, and Windows volume signals:
 const diag = session.getDiagnostics();
 console.log(diag.strategy);           // "tmpfs" | "posix-link" | "ntfs-link" | "pure-manifest"
 console.log(diag.windowsVolume?.fileSystemName); // "NTFS" | "ReFS" | undefined
-console.log(diag.checkpoints[0]?.storage?.hotBuffer?.hits);
+console.log(diag.checkpoints[0]?.storage?.hotBuffer?.memoryHits);
 ```
 
 ## Next steps
