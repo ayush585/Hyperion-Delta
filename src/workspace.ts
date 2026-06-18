@@ -142,6 +142,9 @@ export class HyperionWorkspace {
       beforeMutation: (records) => {
         this.recordVfsMutations(records);
       },
+      mutationFailed: (records) => {
+        this.undoVfsMutations(records);
+      },
     });
     this.lifecycleCleanupRegistry.addCleanupCallback(() => {
       this.emergencyCleanupSync();
@@ -735,6 +738,19 @@ export class HyperionWorkspace {
 
     this.writeBackupManifestBestEffort(checkpoint.id, storage);
     this.writeAttemptJournalBestEffort(checkpoint);
+  }
+
+  private undoVfsMutations(records: VfsMutationRecord[]): void {
+    const normalizedPaths = records
+      .map((record) => this.normalizeVfsPath(record.pathLike))
+      .filter((p): p is string => p !== undefined);
+
+    const checkpoint = this.checkpointStore.getMostRecentActiveCheckpoint();
+    if (!checkpoint) return;
+
+    for (const relativePath of normalizedPaths) {
+      checkpoint.dirty.delete(relativePath);
+    }
   }
 
   private recordIgnoredWrite(

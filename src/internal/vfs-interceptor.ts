@@ -14,6 +14,7 @@ export interface VfsMutationRecord {
 
 export interface VfsInterceptorHooks {
   beforeMutation(records: VfsMutationRecord[]): void;
+  mutationFailed?(records: VfsMutationRecord[]): void;
 }
 
 type SyncApiName =
@@ -160,7 +161,12 @@ export class VfsInterceptor {
 
     this.fsModule[apiName] = (...args: unknown[]) => {
       this.hooks.beforeMutation(getRecords(args));
-      return original.apply(this.fsModule, args);
+      try {
+        return original.apply(this.fsModule, args);
+      } catch (error) {
+        this.hooks.mutationFailed?.(getRecords(args));
+        throw error;
+      }
     };
   }
 
@@ -175,7 +181,18 @@ export class VfsInterceptor {
 
     this.fsModule[apiName] = (...args: unknown[]) => {
       if (typeof args.at(-1) === "function") {
-        this.hooks.beforeMutation(getRecords(args));
+        const records = getRecords(args);
+        this.hooks.beforeMutation(records);
+        const maybeCb = args.at(-1);
+        const hooks = this.hooks;
+        const patchedArgs = [...args];
+        patchedArgs[patchedArgs.length - 1] = function (this: unknown, ...cbArgs: unknown[]) {
+          if (cbArgs[0]) {
+            hooks.mutationFailed?.(records);
+          }
+          return (maybeCb as (...a: unknown[]) => unknown).apply(this, cbArgs);
+        };
+        return original.apply(this.fsModule, patchedArgs);
       }
 
       return original.apply(this.fsModule, args);
@@ -209,8 +226,21 @@ export class VfsInterceptor {
     });
 
     target[apiName] = (...args: unknown[]) => {
-      this.hooks.beforeMutation(getRecords(args));
-      return original.apply(target, args);
+      const records = getRecords(args);
+      this.hooks.beforeMutation(records);
+      try {
+        const promise = original.apply(target, args) as Promise<unknown>;
+        return promise.then(
+          (result) => result,
+          (error) => {
+            this.hooks.mutationFailed?.(records);
+            throw error;
+          },
+        );
+      } catch (error) {
+        this.hooks.mutationFailed?.(records);
+        throw error;
+      }
     };
   }
 
@@ -225,7 +255,12 @@ export class VfsInterceptor {
 
     this.fsModule[apiName] = (...args: unknown[]) => {
       this.hooks.beforeMutation(getRecords(args));
-      return original.apply(this.fsModule, args);
+      try {
+        return original.apply(this.fsModule, args);
+      } catch (error) {
+        this.hooks.mutationFailed?.(getRecords(args));
+        throw error;
+      }
     };
   }
 }
