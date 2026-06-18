@@ -6,6 +6,7 @@ import type {
   Checkpoint,
   CheckpointId,
   DirtyEntry,
+  HyperionCheckpointCreatedBy,
   ResolvedHyperionConfig,
   StateManifest,
 } from "../types.js";
@@ -22,6 +23,10 @@ export interface CreateCheckpointInput {
   baseline: StateManifest;
   deviceId?: number;
   parentId?: CheckpointId;
+  branchId?: string;
+  subagentId?: string;
+  agentId?: string;
+  createdBy?: HyperionCheckpointCreatedBy;
 }
 
 export interface RestoreCheckpointInput {
@@ -33,6 +38,10 @@ export interface RestoreCheckpointInput {
   createdAt: number;
   deviceId?: number;
   parentId?: CheckpointId;
+  branchId?: string;
+  subagentId?: string;
+  agentId?: string;
+  createdBy?: HyperionCheckpointCreatedBy;
 }
 
 export class CheckpointStore {
@@ -57,6 +66,30 @@ export class CheckpointStore {
       checkpoint.parentId = input.parentId;
     }
 
+    if (input.branchId) {
+      checkpoint.branchId = input.branchId;
+    }
+
+    if (input.subagentId) {
+      checkpoint.subagentId = input.subagentId;
+    }
+
+    if (input.agentId) {
+      checkpoint.agentId = input.agentId;
+    }
+
+    if (input.createdBy) {
+      checkpoint.createdBy = input.createdBy;
+    }
+
+    if (checkpoint.agentId === undefined && checkpoint.subagentId !== undefined) {
+      checkpoint.agentId = checkpoint.subagentId;
+    }
+
+    if (checkpoint.subagentId === undefined && checkpoint.agentId !== undefined) {
+      checkpoint.subagentId = checkpoint.agentId;
+    }
+
     if (input.deviceId !== undefined) {
       checkpoint.deviceId = input.deviceId;
     }
@@ -78,6 +111,30 @@ export class CheckpointStore {
 
     if (input.parentId) {
       checkpoint.parentId = input.parentId;
+    }
+
+    if (input.branchId) {
+      checkpoint.branchId = input.branchId;
+    }
+
+    if (input.subagentId) {
+      checkpoint.subagentId = input.subagentId;
+    }
+
+    if (input.agentId) {
+      checkpoint.agentId = input.agentId;
+    }
+
+    if (input.createdBy) {
+      checkpoint.createdBy = input.createdBy;
+    }
+
+    if (checkpoint.agentId === undefined && checkpoint.subagentId !== undefined) {
+      checkpoint.agentId = checkpoint.subagentId;
+    }
+
+    if (checkpoint.subagentId === undefined && checkpoint.agentId !== undefined) {
+      checkpoint.subagentId = checkpoint.agentId;
     }
 
     if (input.deviceId !== undefined) {

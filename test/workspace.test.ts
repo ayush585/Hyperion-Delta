@@ -21,6 +21,7 @@ import {
   DEFAULT_HOT_BUFFER_MAX_FILES,
   DEFAULT_HOT_BUFFER_MAX_TOTAL_BYTES,
   DEFAULT_IGNORED_PATTERNS,
+  HyperionBranchConflictError,
   HyperionCapacityError,
   HyperionError,
   HyperionIgnoredPathError,
@@ -298,6 +299,11 @@ function getWorkspaceBackupManifestPath(root: string, checkpointId: CheckpointId
 
 function readWorkspaceJournal(root: string, checkpointId: CheckpointId): {
   checkpointId: string;
+  parentId?: string;
+  branchId?: string;
+  subagentId?: string;
+  agentId?: string;
+  createdBy?: string;
   sessionId: string;
   status: string;
   strategy: string;
@@ -311,6 +317,11 @@ function readWorkspaceJournal(root: string, checkpointId: CheckpointId): {
 } {
   return JSON.parse(readFileSync(getWorkspaceJournalPath(root, checkpointId), "utf8")) as {
     checkpointId: string;
+    parentId?: string;
+    branchId?: string;
+    subagentId?: string;
+    agentId?: string;
+    createdBy?: string;
     sessionId: string;
     status: string;
     strategy: string;
@@ -322,6 +333,57 @@ function readWorkspaceJournal(root: string, checkpointId: CheckpointId): {
     ignoredPatterns: string[];
     gitHead?: string;
   };
+}
+
+function setCheckpointCreatedDirtyEntry(
+  workspace: HyperionWorkspace,
+  checkpointId: CheckpointId,
+  relativePath: string,
+): void {
+  const checkpoint = getWorkspaceCheckpoint(workspace, checkpointId);
+
+  if (!checkpoint) {
+    throw new Error(`Unknown checkpoint for test helper: ${checkpointId}`);
+  }
+
+  const now = Date.now();
+  checkpoint.dirty.set(relativePath, {
+    relativePath,
+    kind: "created",
+    fileType: "file",
+    capturedBy: "reconcile",
+    firstSeenAt: now,
+    lastSeenAt: now,
+  });
+}
+
+function setCheckpointDeletedDirtyEntry(
+  workspace: HyperionWorkspace,
+  checkpointId: CheckpointId,
+  relativePath: string,
+): void {
+  const checkpoint = getWorkspaceCheckpoint(workspace, checkpointId);
+
+  if (!checkpoint) {
+    throw new Error(`Unknown checkpoint for test helper: ${checkpointId}`);
+  }
+
+  const now = Date.now();
+  const dirtyEntry: Checkpoint["dirty"] extends Map<string, infer TValue> ? TValue : never = {
+    relativePath,
+    kind: "deleted",
+    fileType: "file",
+    capturedBy: "reconcile",
+    firstSeenAt: now,
+    lastSeenAt: now,
+  };
+  const baselineEntry = checkpoint.baseline.statEntries.get(relativePath);
+
+  if (baselineEntry) {
+    dirtyEntry.before = baselineEntry;
+  }
+
+  checkpoint.dirty.set(relativePath, dirtyEntry);
 }
 
 function replaceWorkspaceSessionGarbageCollection(
@@ -667,7 +729,10 @@ describe("HyperionWorkspace", () => {
     writeFileSync(join(root, "source.txt"), "before");
     const workspace = new HyperionWorkspace(root);
     workspace.installFsInterceptor();
-    const checkpointId = await workspace.snapshot();
+    const checkpointId = await workspace.snapshot({
+      branchId: "diagnostics-branch",
+      agentId: "diagnostics-agent",
+    });
 
     fs.writeFileSync(join(root, "source.txt"), "after");
 
@@ -680,6 +745,13 @@ describe("HyperionWorkspace", () => {
     assert.equal(diagnostics.activeCheckpointCount, 1);
     assert.equal(diagnostics.isDisposed, false);
     assert.equal(checkpointDiagnostics?.status, "active");
+    assert.equal(checkpointDiagnostics?.branchId, "diagnostics-branch");
+    assert.equal(checkpointDiagnostics?.agentId, "diagnostics-agent");
+    assert.equal(checkpointDiagnostics?.createdBy, "snapshot");
+    assert.deepEqual(
+      checkpointDiagnostics?.lineage?.map((entry) => entry.checkpointId),
+      [checkpointId],
+    );
     assert.equal(checkpointDiagnostics?.storage?.hotBuffer.enabled, true);
     assert.equal(checkpointDiagnostics?.storage?.hotBuffer.memoryHits, 1);
     assert.equal(checkpointDiagnostics?.storage?.backupRecordCount, 1);
@@ -898,6 +970,411 @@ describe("HyperionWorkspace", () => {
     assert.equal(checkpoint.baseline.statEntries.has("source.ts"), true);
     assert.equal(checkpoint.storageNamespace, join(workspace.config.sessionRoot, checkpointId));
     assert.equal(existsSync(workspace.config.sessionRoot), true);
+  });
+
+  it("stores snapshot lineage metadata and validates branch/subagent options", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const parentId = await workspace.snapshot();
+
+    const childId = await workspace.snapshot({
+      parentId,
+      branchId: "  branch-alpha  ",
+      subagentId: "  planner  ",
+      agentId: "  agent-planner  ",
+      createdBy: "run-attempt",
+    });
+    const childCheckpoint = getWorkspaceCheckpoint(workspace, childId);
+    const childJournal = readWorkspaceJournal(root, childId);
+
+    assert.equal(childCheckpoint?.parentId, parentId);
+    assert.equal(childCheckpoint?.branchId, "branch-alpha");
+    assert.equal(childCheckpoint?.subagentId, "planner");
+    assert.equal(childCheckpoint?.agentId, "agent-planner");
+    assert.equal(childCheckpoint?.createdBy, "run-attempt");
+    assert.equal(childJournal.parentId, parentId);
+    assert.equal(childJournal.branchId, "branch-alpha");
+    assert.equal(childJournal.subagentId, "planner");
+    assert.equal(childJournal.agentId, "agent-planner");
+    assert.equal(childJournal.createdBy, "run-attempt");
+
+    await assert.rejects(
+      () => workspace.snapshot({ branchId: "   " }),
+      /branchId must be a non-empty string/,
+    );
+    await assert.rejects(
+      () => workspace.snapshot({ subagentId: "   " }),
+      /subagentId must be a non-empty string/,
+    );
+    await assert.rejects(
+      () => workspace.snapshot({ agentId: "   " }),
+      /agentId must be a non-empty string/,
+    );
+    await assert.rejects(
+      () => workspace.snapshot({ createdBy: "invalid-tag" as never }),
+      /createdBy is invalid/,
+    );
+  });
+
+  it("forks active checkpoints and inherits or overrides lineage tags", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const parentId = await workspace.snapshot({
+      branchId: "main",
+      subagentId: "planner",
+    });
+
+    const inheritedId = await workspace.fork(parentId);
+    const inheritedCheckpoint = getWorkspaceCheckpoint(workspace, inheritedId);
+
+    assert.equal(inheritedCheckpoint?.parentId, parentId);
+    assert.equal(inheritedCheckpoint?.branchId, "main");
+    assert.equal(inheritedCheckpoint?.subagentId, "planner");
+    assert.equal(inheritedCheckpoint?.agentId, "planner");
+    assert.equal(inheritedCheckpoint?.createdBy, "fork");
+
+    const overriddenId = await workspace.fork(parentId, {
+      branchId: "feature-a",
+      subagentId: "reviewer",
+    });
+    const overriddenCheckpoint = getWorkspaceCheckpoint(workspace, overriddenId);
+
+    assert.equal(overriddenCheckpoint?.parentId, parentId);
+    assert.equal(overriddenCheckpoint?.branchId, "feature-a");
+    assert.equal(overriddenCheckpoint?.subagentId, "reviewer");
+    assert.equal(overriddenCheckpoint?.agentId, "reviewer");
+
+    const parentWithoutBranchId = await workspace.snapshot({ subagentId: "analyst" });
+    const defaultBranchForkId = await workspace.fork(parentWithoutBranchId);
+    const defaultBranchFork = getWorkspaceCheckpoint(workspace, defaultBranchForkId);
+
+    assert.equal(defaultBranchFork?.parentId, parentWithoutBranchId);
+    assert.equal(defaultBranchFork?.branchId, parentWithoutBranchId);
+    assert.equal(defaultBranchFork?.subagentId, "analyst");
+    assert.equal(defaultBranchFork?.agentId, "analyst");
+  });
+
+  it("supports fork without an explicit parent checkpoint", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+
+    const rootForkId = await workspace.fork(undefined, {
+      branchId: "branch-root",
+      agentId: "agent-root",
+    });
+    const rootForkCheckpoint = getWorkspaceCheckpoint(workspace, rootForkId);
+
+    assert.equal(rootForkCheckpoint?.parentId, undefined);
+    assert.equal(rootForkCheckpoint?.branchId, "branch-root");
+    assert.equal(rootForkCheckpoint?.agentId, "agent-root");
+    assert.equal(rootForkCheckpoint?.createdBy, "fork");
+
+    const nextForkId = await workspace.fork(undefined, { branchId: "branch-next" });
+    const nextForkCheckpoint = getWorkspaceCheckpoint(workspace, nextForkId);
+
+    assert.equal(nextForkCheckpoint?.parentId, rootForkId);
+    assert.equal(nextForkCheckpoint?.branchId, "branch-next");
+  });
+
+  it("requires an active parent for snapshot parentId and fork", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+
+    await assert.rejects(
+      () => workspace.snapshot({ parentId: "missing-checkpoint" }),
+      /Unknown checkpoint/,
+    );
+    await assert.rejects(() => workspace.fork("missing-checkpoint"), /Unknown checkpoint/);
+
+    const disposedParentId = await workspace.snapshot();
+    markWorkspaceCheckpointDisposed(workspace, disposedParentId);
+
+    await assert.rejects(
+      () => workspace.snapshot({ parentId: disposedParentId }),
+      /already disposed/,
+    );
+    await assert.rejects(() => workspace.fork(disposedParentId), /already disposed/);
+  });
+
+  it("lists lineage, children, and branch/subagent heads for active checkpoints", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const rootId = await workspace.snapshot({
+      branchId: "branch-a",
+      subagentId: "planner",
+    });
+    const childId = await workspace.fork(rootId);
+    const siblingId = await workspace.fork(rootId, { subagentId: "reviewer" });
+    const branchBId = await workspace.snapshot({
+      branchId: "branch-b",
+      subagentId: "planner",
+    });
+
+    const lineage = workspace.getCheckpointLineage(childId);
+    const children = workspace.listCheckpointChildren(rootId);
+    const branchHeads = workspace.listBranchHeads();
+    const plannerBranchHeads = workspace.listBranchHeads({ subagentId: "planner" });
+    const subagentHeads = workspace.listSubagentHeads({ branchId: "branch-a" });
+
+    assert.deepEqual(lineage.map((summary) => summary.checkpointId), [rootId, childId]);
+    assert.deepEqual(lineage.map((summary) => summary.source), ["active", "active"]);
+    assert.equal(lineage[1]?.parentId, rootId);
+
+    assert.deepEqual(children.map((summary) => summary.checkpointId), [childId, siblingId]);
+    assert.equal(children.every((summary) => summary.parentId === rootId), true);
+
+    assert.equal(
+      branchHeads.find((summary) => summary.branchId === "branch-a")?.checkpointId,
+      siblingId,
+    );
+    assert.equal(
+      branchHeads.find((summary) => summary.branchId === "branch-b")?.checkpointId,
+      branchBId,
+    );
+    assert.equal(
+      plannerBranchHeads.find((summary) => summary.branchId === "branch-a")?.checkpointId,
+      childId,
+    );
+    assert.equal(
+      plannerBranchHeads.find((summary) => summary.branchId === "branch-b")?.checkpointId,
+      branchBId,
+    );
+    assert.equal(
+      subagentHeads.find((summary) => summary.subagentId === "planner")?.checkpointId,
+      childId,
+    );
+    assert.equal(
+      subagentHeads.find((summary) => summary.subagentId === "reviewer")?.checkpointId,
+      siblingId,
+    );
+  });
+
+  it("reads lineage and head summaries from durable journals", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const rootId = await workspace.snapshot({
+      branchId: "branch-a",
+      subagentId: "planner",
+    });
+    const childId = await workspace.fork(rootId);
+    markWorkspaceCheckpointDisposed(workspace, childId);
+
+    const freshWorkspace = new HyperionWorkspace(root);
+    const lineage = freshWorkspace.getCheckpointLineage(childId);
+    const activeChildren = freshWorkspace.listCheckpointChildren(rootId);
+    const allChildren = freshWorkspace.listCheckpointChildren(rootId, { includeInactive: true });
+    const activeBranchHeads = freshWorkspace.listBranchHeads();
+    const allBranchHeads = freshWorkspace.listBranchHeads({ includeInactive: true });
+
+    assert.deepEqual(lineage.map((summary) => summary.checkpointId), [rootId, childId]);
+    assert.deepEqual(lineage.map((summary) => summary.source), ["journal", "journal"]);
+    assert.equal(lineage[1]?.status, "disposed");
+
+    assert.equal(activeChildren.some((summary) => summary.checkpointId === childId), false);
+    assert.equal(allChildren.some((summary) => summary.checkpointId === childId), true);
+    assert.equal(
+      activeBranchHeads.find((summary) => summary.branchId === "branch-a")?.checkpointId,
+      rootId,
+    );
+    assert.equal(
+      allBranchHeads.find((summary) => summary.branchId === "branch-a")?.checkpointId,
+      childId,
+    );
+  });
+
+  it("runs callbacks in an existing branch and reconciles before returning", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const branchCheckpointId = await workspace.snapshot({
+      branchId: "feature-a",
+      agentId: "agent-a",
+    });
+
+    const runResult = await workspace.runInBranch(branchCheckpointId, async ({ checkpointId, workspace: branchWorkspace }) => {
+      assert.equal(checkpointId, branchCheckpointId);
+      assert.equal(branchWorkspace, workspace);
+      writeFileSync(join(root, "branch-created.txt"), "created");
+      return "done";
+    });
+
+    assert.equal(runResult.checkpointId, branchCheckpointId);
+    assert.equal(runResult.result, "done");
+    assert.equal(runResult.reconcileResult.created.includes("branch-created.txt"), true);
+    assert.equal(
+      getWorkspaceCheckpoint(workspace, branchCheckpointId)?.dirty.has("branch-created.txt"),
+      true,
+    );
+  });
+
+  it("promoteBranch fast-path succeeds for non-overlapping dirty sets", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const baseId = await workspace.snapshot({ branchId: "main", agentId: "lead" });
+    const featureAId = await workspace.fork(baseId, {
+      branchId: "feature-a",
+      agentId: "agent-a",
+    });
+    const featureBId = await workspace.fork(baseId, {
+      branchId: "feature-b",
+      agentId: "agent-b",
+    });
+
+    writeFileSync(join(root, "feature-a.txt"), "feature-a");
+    await workspace.reconcile(featureAId);
+    setCheckpointCreatedDirtyEntry(workspace, featureBId, "feature-b.txt");
+
+    const result = await workspace.promoteBranch(featureAId, { conflictMode: "reject" });
+
+    assert.equal(result.checkpointId, featureAId);
+    assert.equal(result.merge.conflicts.length, 0);
+    assert.equal(result.merge.appliedPaths.includes("feature-a.txt"), true);
+    assert.equal(getWorkspaceCheckpoint(workspace, featureAId)?.status, "promoted");
+    assert.equal(getWorkspaceCheckpoint(workspace, featureBId)?.status, "active");
+  });
+
+  it("promoteBranch allows overlapping paths with compatible outcomes", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const baseId = await workspace.snapshot({ branchId: "main", agentId: "lead" });
+    const featureAId = await workspace.fork(baseId, {
+      branchId: "feature-a",
+      agentId: "agent-a",
+    });
+    const featureBId = await workspace.fork(baseId, {
+      branchId: "feature-b",
+      agentId: "agent-b",
+    });
+
+    writeFileSync(join(root, "shared-compatible.txt"), "shared");
+    await workspace.reconcile(featureAId);
+    await workspace.reconcile(featureBId);
+
+    const result = await workspace.promoteBranch(featureAId, { conflictMode: "reject" });
+
+    assert.equal(result.merge.conflicts.length, 0);
+    assert.equal(result.merge.appliedPaths.includes("shared-compatible.txt"), true);
+    assert.equal(getWorkspaceCheckpoint(workspace, featureAId)?.status, "promoted");
+    assert.equal(getWorkspaceCheckpoint(workspace, featureBId)?.status, "active");
+  });
+
+  it("promoteBranch rejects overlapping sibling changes with a typed conflict", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const baseId = await workspace.snapshot({ branchId: "main", agentId: "lead" });
+    const featureAId = await workspace.fork(baseId, {
+      branchId: "feature-a",
+      agentId: "agent-a",
+    });
+    const featureBId = await workspace.fork(baseId, {
+      branchId: "feature-b",
+      agentId: "agent-b",
+    });
+
+    writeFileSync(join(root, "shared.txt"), "source");
+    await workspace.reconcile(featureAId);
+    setCheckpointDeletedDirtyEntry(workspace, featureBId, "shared.txt");
+
+    await assert.rejects(
+      () => workspace.promoteBranch(featureAId, { conflictMode: "reject" }),
+      (error) => {
+        assert.equal(error instanceof HyperionBranchConflictError, true);
+        const conflictError = error as HyperionBranchConflictError;
+        assert.equal(conflictError.conflicts.some((conflict) => conflict.relativePath === "shared.txt"), true);
+        assert.equal(conflictError.conflicts.some((conflict) => conflict.targetCheckpointId === featureBId), true);
+        return true;
+      },
+    );
+
+    assert.equal(getWorkspaceCheckpoint(workspace, featureAId)?.status, "active");
+    assert.equal(getWorkspaceCheckpoint(workspace, featureBId)?.status, "active");
+  });
+
+  it("dropBranch rolls back only its own non-conflicting dirty set", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const baseId = await workspace.snapshot({ branchId: "main", agentId: "lead" });
+    const featureAId = await workspace.fork(baseId, {
+      branchId: "feature-a",
+      agentId: "agent-a",
+    });
+    const featureBId = await workspace.fork(baseId, {
+      branchId: "feature-b",
+      agentId: "agent-b",
+    });
+
+    writeFileSync(join(root, "branch-a.txt"), "branch-a");
+    writeFileSync(join(root, "branch-b.txt"), "branch-b");
+    setCheckpointCreatedDirtyEntry(workspace, featureAId, "branch-a.txt");
+    setCheckpointCreatedDirtyEntry(workspace, featureBId, "branch-b.txt");
+
+    await workspace.dropBranch(featureAId);
+
+    assert.equal(existsSync(join(root, "branch-a.txt")), false);
+    assert.equal(existsSync(join(root, "branch-b.txt")), true);
+    assert.equal(getWorkspaceCheckpoint(workspace, featureAId)?.status, "disposed");
+    assert.equal(getWorkspaceCheckpoint(workspace, featureBId)?.status, "active");
+  });
+
+  it("dropBranch rejects overlapping sibling changes with a typed conflict", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const baseId = await workspace.snapshot({ branchId: "main", agentId: "lead" });
+    const featureAId = await workspace.fork(baseId, {
+      branchId: "feature-a",
+      agentId: "agent-a",
+    });
+    const featureBId = await workspace.fork(baseId, {
+      branchId: "feature-b",
+      agentId: "agent-b",
+    });
+
+    writeFileSync(join(root, "shared-drop.txt"), "shared");
+    setCheckpointCreatedDirtyEntry(workspace, featureAId, "shared-drop.txt");
+    setCheckpointDeletedDirtyEntry(workspace, featureBId, "shared-drop.txt");
+
+    await assert.rejects(
+      () => workspace.dropBranch(featureAId),
+      (error) => {
+        assert.equal(error instanceof HyperionBranchConflictError, true);
+        const conflictError = error as HyperionBranchConflictError;
+        assert.equal(conflictError.conflicts.some((conflict) => conflict.relativePath === "shared-drop.txt"), true);
+        return true;
+      },
+    );
+
+    assert.equal(existsSync(join(root, "shared-drop.txt")), true);
+    assert.equal(getWorkspaceCheckpoint(workspace, featureAId)?.status, "active");
+  });
+
+  it("rollback rejects overlapping sibling changes with a typed conflict", async () => {
+    const root = createTempWorkspace();
+    const workspace = new HyperionWorkspace(root);
+    const baseId = await workspace.snapshot({ branchId: "main", agentId: "lead" });
+    const featureAId = await workspace.fork(baseId, {
+      branchId: "feature-a",
+      agentId: "agent-a",
+    });
+    const featureBId = await workspace.fork(baseId, {
+      branchId: "feature-b",
+      agentId: "agent-b",
+    });
+
+    writeFileSync(join(root, "shared-rollback.txt"), "shared");
+    setCheckpointCreatedDirtyEntry(workspace, featureAId, "shared-rollback.txt");
+    setCheckpointDeletedDirtyEntry(workspace, featureBId, "shared-rollback.txt");
+
+    await assert.rejects(
+      () => workspace.rollback(featureAId),
+      (error) => {
+        assert.equal(error instanceof HyperionBranchConflictError, true);
+        const conflictError = error as HyperionBranchConflictError;
+        assert.equal(conflictError.conflicts.some((conflict) => conflict.relativePath === "shared-rollback.txt"), true);
+        return true;
+      },
+    );
+
+    assert.equal(getWorkspaceCheckpoint(workspace, featureAId)?.status, "active");
+    assert.equal(getWorkspaceCheckpoint(workspace, featureBId)?.status, "active");
   });
 
   it("writes a durable attempt journal before snapshot returns", async () => {

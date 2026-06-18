@@ -15,6 +15,7 @@ import type {
   CheckpointId,
   DirtyEntry,
   GitIndexEntry,
+  HyperionCheckpointCreatedBy,
   RecoverableAttempt,
   StatLedgerEntry,
   StorageStrategyKind,
@@ -41,6 +42,11 @@ export interface AttemptJournalAdapter {
 export interface AttemptJournalEntry {
   schemaVersion: 1;
   checkpointId: CheckpointId;
+  parentId?: CheckpointId;
+  branchId?: string;
+  subagentId?: string;
+  agentId?: string;
+  createdBy?: HyperionCheckpointCreatedBy;
   sessionId: string;
   workspaceRoot: string;
   createdAt: number;
@@ -216,6 +222,34 @@ export class AttemptJournalStore {
         canRehydrate: rehydrationStatus.canRehydrate,
       };
 
+      if (journal.parentId) {
+        attempt.parentId = journal.parentId;
+      }
+
+      if (journal.branchId) {
+        attempt.branchId = journal.branchId;
+      }
+
+      if (journal.subagentId) {
+        attempt.subagentId = journal.subagentId;
+      }
+
+      if (journal.agentId) {
+        attempt.agentId = journal.agentId;
+      }
+
+      if (journal.createdBy) {
+        attempt.createdBy = journal.createdBy;
+      }
+
+      if (attempt.agentId === undefined && attempt.subagentId !== undefined) {
+        attempt.agentId = attempt.subagentId;
+      }
+
+      if (attempt.subagentId === undefined && attempt.agentId !== undefined) {
+        attempt.subagentId = attempt.agentId;
+      }
+
       if (rehydrationStatus.reason) {
         attempt.nonRehydratableReason = rehydrationStatus.reason;
       }
@@ -273,6 +307,34 @@ export class AttemptJournalStore {
         lastSeenAt: dirtyEntry.lastSeenAt,
       })),
     };
+
+    if (checkpoint.parentId) {
+      entry.parentId = checkpoint.parentId;
+    }
+
+    if (checkpoint.branchId) {
+      entry.branchId = checkpoint.branchId;
+    }
+
+    if (checkpoint.subagentId) {
+      entry.subagentId = checkpoint.subagentId;
+    }
+
+    if (checkpoint.agentId) {
+      entry.agentId = checkpoint.agentId;
+    }
+
+    if (checkpoint.createdBy) {
+      entry.createdBy = checkpoint.createdBy;
+    }
+
+    if (entry.agentId === undefined && entry.subagentId !== undefined) {
+      entry.agentId = entry.subagentId;
+    }
+
+    if (entry.subagentId === undefined && entry.agentId !== undefined) {
+      entry.subagentId = entry.agentId;
+    }
 
     if (checkpoint.baseline.gitHead) {
       entry.gitHead = checkpoint.baseline.gitHead;
@@ -365,6 +427,17 @@ function isAttemptJournalEntry(value: unknown): value is AttemptJournalEntry {
   return (
     candidate.schemaVersion === ATTEMPT_JOURNAL_VERSION &&
     typeof candidate.checkpointId === "string" &&
+    (candidate.parentId === undefined || typeof candidate.parentId === "string") &&
+    (candidate.branchId === undefined || typeof candidate.branchId === "string") &&
+    (candidate.subagentId === undefined || typeof candidate.subagentId === "string") &&
+    (candidate.agentId === undefined || typeof candidate.agentId === "string") &&
+    (candidate.createdBy === undefined ||
+      candidate.createdBy === "snapshot" ||
+      candidate.createdBy === "fork" ||
+      candidate.createdBy === "run-attempt" ||
+      candidate.createdBy === "run-in-branch" ||
+      candidate.createdBy === "rehydrate" ||
+      candidate.createdBy === "unknown") &&
     typeof candidate.sessionId === "string" &&
     typeof candidate.workspaceRoot === "string" &&
     typeof candidate.createdAt === "number" &&

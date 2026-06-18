@@ -7,7 +7,9 @@ import {
   DEFAULT_HOT_BUFFER_MAX_TOTAL_BYTES,
   DEFAULT_IGNORED_PATTERNS,
   HyperionAgentSession,
+  HyperionBranchConflictError,
   HyperionAttemptContextError,
+  HyperionAttemptInProgressError,
   HyperionExecError,
   HyperionExecOptionsError,
   HyperionExecTimeoutError,
@@ -17,19 +19,30 @@ import {
   type Checkpoint,
   type CheckpointId,
   type DirtyEntry,
+  type HyperionBranchConflictMode,
+  type HyperionBranchContext,
+  type HyperionBranchMergeResult,
+  type HyperionBranchPathConflict,
+  type HyperionBranchPromotionResult,
+  type HyperionBranchRunResult,
   type HyperionAgentSessionDiagnostics,
   type HyperionAgentSessionErrorCode,
   type HyperionAttemptOptions,
   type HyperionAttemptResult,
+  type HyperionCheckpointCreatedBy,
+  type HyperionCheckpointHeadFilter,
   type HyperionCheckpointDiagnostics,
+  type HyperionCheckpointSummary,
   type HyperionConfig,
   type HyperionDiagnostics,
   type HyperionExecOptions,
   type HyperionExecResult,
   type HyperionHotBufferDiagnostics,
   type HyperionIgnoredWriteEvent,
+  type HyperionPromoteBranchOptions,
   type HyperionPromoteOptions,
   type HyperionPromotionResult,
+  type HyperionSnapshotOptions,
   type HyperionStorageDiagnostics,
   type HyperionToolOutputContract,
   type HyperionToolOutputPath,
@@ -50,6 +63,8 @@ describe("package exports", () => {
     assert.equal(typeof HyperionExecTimeoutError, "function");
     assert.equal(typeof HyperionExecOptionsError, "function");
     assert.equal(typeof HyperionAttemptContextError, "function");
+    assert.equal(typeof HyperionAttemptInProgressError, "function");
+    assert.equal(typeof HyperionBranchConflictError, "function");
     assert.equal(typeof HyperionIgnoredPathError, "function");
     assert.equal(typeof DEFAULT_HOT_BUFFER_MAX_FILE_BYTES, "number");
     assert.equal(typeof DEFAULT_HOT_BUFFER_MAX_TOTAL_BYTES, "number");
@@ -69,6 +84,13 @@ describe("package exports", () => {
       durableAttemptJournals: true,
     };
     const strategy: StorageStrategyKind = "pure-manifest";
+    const snapshotOptions: HyperionSnapshotOptions = {
+      parentId: checkpointId,
+      branchId: "branch-a",
+      subagentId: "planner",
+      agentId: "agent-planner",
+      createdBy: "run-attempt",
+    };
     const reconcileResult: ReconcileResult = {
       checkpointId,
       created: [],
@@ -93,6 +115,11 @@ describe("package exports", () => {
     };
     const checkpoint: Checkpoint = {
       id: checkpointId,
+      parentId: checkpointId,
+      branchId: "branch-a",
+      subagentId: "planner",
+      agentId: "agent-planner",
+      createdBy: "snapshot",
       baseline: manifest,
       dirty: new Map([[dirtyEntry.relativePath, dirtyEntry]]),
       storageNamespace: ".hyperion/checkpoints/checkpoint",
@@ -130,8 +157,85 @@ describe("package exports", () => {
     };
     const checkpointDiagnostics: HyperionCheckpointDiagnostics = {
       checkpointId,
+      parentId: checkpointId,
+      branchId: "branch-a",
+      subagentId: "planner",
+      agentId: "agent-planner",
+      createdBy: "snapshot",
+      createdAt: 1,
       status: "active",
+      lineage: [
+        {
+          checkpointId,
+          branchId: "branch-a",
+          subagentId: "planner",
+          agentId: "agent-planner",
+          createdBy: "snapshot",
+          status: "active",
+          createdAt: 1,
+          source: "active",
+        },
+      ],
       storage: storageDiagnostics,
+    };
+    const checkpointSummary: HyperionCheckpointSummary = {
+      checkpointId,
+      parentId: checkpointId,
+      branchId: "branch-a",
+      subagentId: "planner",
+      agentId: "agent-planner",
+      createdBy: "snapshot",
+      status: "active",
+      createdAt: 1,
+      source: "active",
+    };
+    const checkpointHeadFilter: HyperionCheckpointHeadFilter = {
+      branchId: "branch-a",
+      subagentId: "planner",
+      agentId: "agent-planner",
+      includeInactive: true,
+    };
+    const checkpointCreatedBy: HyperionCheckpointCreatedBy = "run-in-branch";
+    const branchConflictMode: HyperionBranchConflictMode = "reject";
+    const branchPathConflict: HyperionBranchPathConflict = {
+      relativePath: "src/index.ts",
+      sourceCheckpointId: checkpointId,
+      targetCheckpointId: "target-checkpoint",
+      sourceKind: "modified",
+      targetKind: "deleted",
+      sourceAgentId: "agent-a",
+      targetAgentId: "agent-b",
+    };
+    const branchMergeResult: HyperionBranchMergeResult = {
+      sourceCheckpointId: checkpointId,
+      targetCheckpointId: "target-checkpoint",
+      conflictMode: branchConflictMode,
+      mergedAt: 1,
+      appliedPaths: ["src/ok.ts"],
+      conflicts: [branchPathConflict],
+    };
+    const promoteBranchOptions: HyperionPromoteBranchOptions = {
+      conflictMode: branchConflictMode,
+      targetCheckpointId: "target-checkpoint",
+      exportPatch: true,
+    };
+    const branchPromotionResult: HyperionBranchPromotionResult = {
+      checkpointId,
+      promotedAt: 2,
+      dirtyCount: 1,
+      reconcileResult,
+      storageCleaned: true,
+      merge: branchMergeResult,
+    };
+    const branchContext: HyperionBranchContext = {
+      checkpointId,
+      workspace: {} as HyperionWorkspace,
+      reconcile: async () => reconcileResult,
+    };
+    const branchRunResult: HyperionBranchRunResult<string> = {
+      checkpointId,
+      result: "ok",
+      reconcileResult,
     };
     const workspaceDiagnostics: HyperionDiagnostics = {
       strategy,
@@ -180,6 +284,11 @@ describe("package exports", () => {
     };
     const recoverableAttempt: RecoverableAttempt = {
       checkpointId,
+      parentId: checkpointId,
+      branchId: "branch-a",
+      subagentId: "planner",
+      agentId: "agent-planner",
+      createdBy: "snapshot",
       sessionId: "session",
       createdAt: 1,
       updatedAt: 2,
@@ -195,9 +304,22 @@ describe("package exports", () => {
     assert.equal(config.strictIgnoredWrites, true);
     assert.equal(config.durableAttemptJournals, true);
     assert.equal(strategy, "pure-manifest");
+    assert.equal(snapshotOptions.parentId, checkpointId);
+    assert.equal(snapshotOptions.agentId, "agent-planner");
+    assert.equal(snapshotOptions.createdBy, "run-attempt");
     assert.equal(reconcileResult.checkpointId, checkpointId);
     assert.equal(checkpoint.id, checkpointId);
     assert.equal(workspaceDiagnostics.checkpoints[0]?.checkpointId, checkpointId);
+    assert.equal(checkpointSummary.branchId, "branch-a");
+    assert.equal(checkpointSummary.agentId, "agent-planner");
+    assert.equal(checkpointHeadFilter.includeInactive, true);
+    assert.equal(checkpointCreatedBy, "run-in-branch");
+    assert.equal(branchPathConflict.targetKind, "deleted");
+    assert.equal(branchMergeResult.conflictMode, "reject");
+    assert.equal(promoteBranchOptions.exportPatch, true);
+    assert.equal(branchPromotionResult.merge.conflicts.length, 1);
+    assert.equal(branchContext.checkpointId, checkpointId);
+    assert.equal(branchRunResult.result, "ok");
     assert.equal(storageDiagnostics.hotBuffer.memoryHits, 1);
     assert.equal(storageDiagnostics.ntfsLink?.linkModeActive, false);
     assert.equal(workspaceDiagnostics.windowsVolume?.hardLinkCapable, true);
@@ -216,8 +338,24 @@ describe("package exports", () => {
     assert.equal(recoverableAttempt.checkpointId, checkpointId);
     assert.equal(typeof HyperionWorkspace.prototype.exportPatch, "function");
     assert.equal(typeof HyperionAgentSession.prototype.exportPatch, "function");
+    assert.equal(typeof HyperionWorkspace.prototype.fork, "function");
+    assert.equal(typeof HyperionAgentSession.prototype.fork, "function");
+    assert.equal(typeof HyperionWorkspace.prototype.runInBranch, "function");
+    assert.equal(typeof HyperionAgentSession.prototype.runInBranch, "function");
+    assert.equal(typeof HyperionWorkspace.prototype.promoteBranch, "function");
+    assert.equal(typeof HyperionAgentSession.prototype.promoteBranch, "function");
+    assert.equal(typeof HyperionWorkspace.prototype.dropBranch, "function");
+    assert.equal(typeof HyperionAgentSession.prototype.dropBranch, "function");
     assert.equal(typeof HyperionWorkspace.prototype.promote, "function");
     assert.equal(typeof HyperionAgentSession.prototype.promote, "function");
+    assert.equal(typeof HyperionWorkspace.prototype.getCheckpointLineage, "function");
+    assert.equal(typeof HyperionAgentSession.prototype.getCheckpointLineage, "function");
+    assert.equal(typeof HyperionWorkspace.prototype.listCheckpointChildren, "function");
+    assert.equal(typeof HyperionAgentSession.prototype.listCheckpointChildren, "function");
+    assert.equal(typeof HyperionWorkspace.prototype.listBranchHeads, "function");
+    assert.equal(typeof HyperionAgentSession.prototype.listBranchHeads, "function");
+    assert.equal(typeof HyperionWorkspace.prototype.listSubagentHeads, "function");
+    assert.equal(typeof HyperionAgentSession.prototype.listSubagentHeads, "function");
     assert.equal(typeof HyperionWorkspace.prototype.declareToolOutputs, "function");
     assert.equal(typeof HyperionAgentSession.prototype.declareToolOutputs, "function");
     assert.equal(typeof HyperionWorkspace.prototype.getDiagnostics, "function");

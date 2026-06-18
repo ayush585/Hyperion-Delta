@@ -22,6 +22,7 @@ Pull requests run the reliability workflow:
 - **Failure injection** checks for snapshot/reconcile/rollback error paths
 - **Fuzz smoke** with deterministic seeded mutation batches
 - **Stress smoke** with concurrent snapshot/reconcile/rollback loops
+- **Branch contention stress** with parallel subagent promote/drop conflict pressure
 
 ## Nightly soak
 
@@ -51,5 +52,6 @@ npm run test:reliability:nightly
 ```
 
 You can tune thresholds with environment variables such as
-`HYPERION_FUZZ_SEEDS`, `HYPERION_FUZZ_OPS`, `HYPERION_STRESS_CYCLES`, and
-`HYPERION_STRESS_CONCURRENCY`.
+`HYPERION_FUZZ_SEEDS`, `HYPERION_FUZZ_OPS`, `HYPERION_STRESS_CYCLES`,
+`HYPERION_STRESS_CONCURRENCY`, `HYPERION_BRANCH_STRESS_CYCLES`, and
+`HYPERION_BRANCH_SUBAGENTS`.

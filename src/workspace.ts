@@ -11,6 +11,7 @@ import {
   DEFAULT_MAX_CONCURRENT_CHECKPOINTS,
 } from "./constants.js";
 import {
+  HyperionBranchConflictError,
   HyperionError,
   HyperionIntegrityError,
   HyperionIgnoredPathError,
@@ -23,6 +24,10 @@ import {
   type BackupManifestEntry,
 } from "./internal/attempt-journal.js";
 import { CheckpointStore, type StoredCheckpoint } from "./internal/checkpoint-store.js";
+import {
+  BranchMergeEngine,
+  type BranchMergePlanInput,
+} from "./internal/branch-merge-engine.js";
 import {
   discoverEnvironmentProfile,
   probeWindowsHardLinkCapability,
@@ -52,10 +57,18 @@ import { VfsInterceptor, type VfsMutationRecord } from "./internal/vfs-intercept
 import type {
   CheckpointId,
   DirtyEntry,
+  HyperionBranchConflictMode,
+  HyperionBranchMergeResult,
+  HyperionBranchPromotionResult,
+  HyperionCheckpointHeadFilter,
+  HyperionCheckpointCreatedBy,
   HyperionCheckpointDiagnostics,
+  HyperionCheckpointSummary,
   HyperionConfig,
   HyperionDiagnostics,
   HyperionIgnoredWriteEvent,
+  HyperionPromoteBranchOptions,
+  HyperionSnapshotOptions,
   HyperionWindowsVolumeDiagnostics,
   HyperionPromoteOptions,
   HyperionPromotionResult,
@@ -83,6 +96,18 @@ interface ToolOutputDeclaration {
   declaredAt: number;
 }
 
+export interface HyperionBranchContext {
+  checkpointId: CheckpointId;
+  workspace: HyperionWorkspace;
+  reconcile(): Promise<ReconcileResult>;
+}
+
+export interface HyperionBranchRunResult<T> {
+  checkpointId: CheckpointId;
+  result: T;
+  reconcileResult: ReconcileResult;
+}
+
 const IGNORED_WRITE_EVENT_LIMIT = 100;
 
 export class HyperionWorkspace {
@@ -100,6 +125,7 @@ export class HyperionWorkspace {
   private readonly ignoredWriteEvents: IgnoredWriteEvent[] = [];
   private readonly sessionManager: HyperionSessionManager;
   private readonly patchExportEngine = new PatchExportEngine();
+  private readonly branchMergeEngine = new BranchMergeEngine();
   private readonly rollbackEngine = new RollbackEngine();
   private readonly reconciliationEngine = new ReconciliationEngine();
   private readonly vfsInterceptor: VfsInterceptor;
@@ -111,6 +137,8 @@ export class HyperionWorkspace {
     CheckpointId,
     Map<string, ToolOutputDeclaration>
   >();
+  private readonly branchOperationLocks = new Set<CheckpointId>();
+  private branchLifecycleQueue: Promise<void> = Promise.resolve();
   private sessionDeviceInfo?: SessionDeviceInfo;
   private emergencyCleanupCompleted = false;
   private disposed = false;
@@ -205,8 +233,9 @@ export class HyperionWorkspace {
     }
   }
 
-  public async snapshot(): Promise<CheckpointId> {
+  public async snapshot(options: HyperionSnapshotOptions = {}): Promise<CheckpointId> {
     this.assertNotDisposed("snapshot()");
+    const snapshotOptions = this.resolveSnapshotOptions(options);
 
     let checkpoint: StoredCheckpoint | undefined;
     let storage: StorageStrategy | undefined;
@@ -218,10 +247,30 @@ export class HyperionWorkspace {
       const deviceInfo = this.probeSessionDeviceInfo();
       this.refreshStrategySelection(deviceInfo);
       const baseline = this.withDeclaredToolOutputStats(this.stateEngine.captureManifest());
-      checkpoint = this.checkpointStore.createCheckpoint({
+      const checkpointInput: Parameters<CheckpointStore["createCheckpoint"]>[0] = {
         baseline,
         deviceId: deviceInfo.workspaceDeviceId,
-      });
+      };
+
+      if (snapshotOptions.parentId !== undefined) {
+        checkpointInput.parentId = snapshotOptions.parentId;
+      }
+
+      if (snapshotOptions.branchId !== undefined) {
+        checkpointInput.branchId = snapshotOptions.branchId;
+      }
+
+      if (snapshotOptions.subagentId !== undefined) {
+        checkpointInput.subagentId = snapshotOptions.subagentId;
+      }
+
+      if (snapshotOptions.agentId !== undefined) {
+        checkpointInput.agentId = snapshotOptions.agentId;
+      }
+
+      checkpointInput.createdBy = snapshotOptions.createdBy ?? "snapshot";
+
+      checkpoint = this.checkpointStore.createCheckpoint(checkpointInput);
 
       storage = createCheckpointStorage({
         workspaceRoot: this.root,
@@ -255,36 +304,276 @@ export class HyperionWorkspace {
     }
   }
 
-  public async rollback(checkpointId: CheckpointId): Promise<void> {
-    this.assertNotDisposed("rollback()");
-    const checkpoint = this.requireActiveCheckpoint(checkpointId);
-    const storage = this.requireCheckpointStorage(checkpointId);
-    const ghostDirectoryCleaner = new GhostDirectoryCleaner({
-      workspaceRoot: this.root,
-      baseline: checkpoint.baseline,
-      ignoreMatcher: this.ignoreMatcher,
+  public async fork(
+    parentCheckpointId?: CheckpointId,
+    options: Omit<HyperionSnapshotOptions, "parentId"> = {},
+  ): Promise<CheckpointId> {
+    this.assertNotDisposed("fork()");
+    const parentCheckpoint = parentCheckpointId === undefined
+      ? this.checkpointStore.getMostRecentActiveCheckpoint()
+      : this.requireActiveCheckpoint(parentCheckpointId);
+
+    if (!parentCheckpoint) {
+      return this.snapshot({
+        ...options,
+        createdBy: options.createdBy ?? "fork",
+      });
+    }
+
+    const resolvedAgentId = options.agentId
+      ?? options.subagentId
+      ?? parentCheckpoint.agentId
+      ?? parentCheckpoint.subagentId;
+    const resolvedSubagentId = options.subagentId
+      ?? options.agentId
+      ?? parentCheckpoint.subagentId
+      ?? parentCheckpoint.agentId;
+
+    return this.snapshot({
+      parentId: parentCheckpoint.id,
+      branchId: options.branchId ?? parentCheckpoint.branchId ?? parentCheckpoint.id,
+      ...(resolvedSubagentId === undefined ? {} : { subagentId: resolvedSubagentId }),
+      ...(resolvedAgentId === undefined ? {} : { agentId: resolvedAgentId }),
+      createdBy: options.createdBy ?? "fork",
     });
+  }
+
+  public async runInBranch<T>(
+    branchCheckpointId: CheckpointId,
+    callback: (context: HyperionBranchContext) => T | Promise<T>,
+  ): Promise<HyperionBranchRunResult<T>> {
+    this.assertNotDisposed("runInBranch()");
+
+    if (typeof callback !== "function") {
+      throw new HyperionPathError("runInBranch() callback must be a function");
+    }
+
+    this.requireActiveCheckpoint(branchCheckpointId);
+    this.acquireBranchOperationLock(branchCheckpointId, "runInBranch()");
 
     try {
-      try {
-        this.writeAttemptJournalBestEffort(checkpoint);
-        await this.rollbackEngine.rollback({
-          checkpoint,
-          storage,
-          ghostDirectoryCleaner,
-          reconcile: async () => {
-            await this.reconcile(checkpointId);
-          },
+      const context: HyperionBranchContext = {
+        checkpointId: branchCheckpointId,
+        workspace: this,
+        reconcile: () => this.reconcile(branchCheckpointId),
+      };
+      const result = await callback(context);
+      const reconcileResult = await this.reconcile(branchCheckpointId);
+
+      return {
+        checkpointId: branchCheckpointId,
+        result,
+        reconcileResult,
+      };
+    } finally {
+      this.releaseBranchOperationLock(branchCheckpointId);
+    }
+  }
+
+  public async promoteBranch(
+    branchCheckpointId: CheckpointId,
+    options: HyperionPromoteBranchOptions = {},
+  ): Promise<HyperionBranchPromotionResult> {
+    this.assertNotDisposed("promoteBranch()");
+    const checkpoint = this.requireActiveCheckpoint(branchCheckpointId);
+    const conflictMode: HyperionBranchConflictMode = options.conflictMode ?? "reject";
+
+    if (conflictMode !== "reject") {
+      throw new HyperionPathError(`Unsupported conflictMode for promoteBranch(): ${conflictMode}`);
+    }
+
+    this.acquireBranchOperationLock(branchCheckpointId, "promoteBranch()");
+
+    try {
+      return await this.withBranchLifecycleLock("promoteBranch()", async () => {
+        await this.reconcile(branchCheckpointId);
+
+        const targetCheckpoint = options.targetCheckpointId === undefined
+          ? this.resolveDefaultMergeTarget(checkpoint)
+          : this.requireActiveCheckpoint(options.targetCheckpointId);
+        const merge = this.planBranchMerge({
+          source: checkpoint,
+          ...(targetCheckpoint === undefined ? {} : { target: targetCheckpoint }),
+          conflictMode,
+          contenders: this.collectBranchMergeContenders(checkpoint, targetCheckpoint),
         });
-        this.writeAttemptJournalBestEffort(checkpoint);
-      } catch (error) {
-        this.writeAttemptJournalBestEffort(checkpoint);
-        throw error;
+
+        if (merge.conflicts.length > 0) {
+          throw new HyperionBranchConflictError({
+            sourceCheckpointId: branchCheckpointId,
+            conflicts: merge.conflicts,
+            message:
+              `promoteBranch() rejected ${merge.conflicts.length} conflicting path(s) for checkpoint ${branchCheckpointId}`,
+          });
+        }
+
+        const promotionResult = await this.promote(
+          branchCheckpointId,
+          options.exportPatch === undefined ? {} : { exportPatch: options.exportPatch },
+        );
+
+        return {
+          ...promotionResult,
+          merge: {
+            ...merge,
+            mergedAt: promotionResult.promotedAt,
+          },
+        };
+      });
+    } finally {
+      this.releaseBranchOperationLock(branchCheckpointId);
+    }
+  }
+
+  public async dropBranch(branchCheckpointId: CheckpointId): Promise<void> {
+    this.assertNotDisposed("dropBranch()");
+    const checkpoint = this.requireActiveCheckpoint(branchCheckpointId);
+    this.acquireBranchOperationLock(branchCheckpointId, "dropBranch()");
+
+    try {
+      await this.withBranchLifecycleLock("dropBranch()", async () => {
+        const targetCheckpoint = this.resolveDefaultMergeTarget(checkpoint);
+        const merge = this.planBranchMerge({
+          source: checkpoint,
+          ...(targetCheckpoint === undefined ? {} : { target: targetCheckpoint }),
+          conflictMode: "reject",
+          contenders: this.collectBranchMergeContenders(checkpoint, targetCheckpoint),
+        });
+
+        if (merge.conflicts.length > 0) {
+          throw new HyperionBranchConflictError({
+            sourceCheckpointId: branchCheckpointId,
+            conflicts: merge.conflicts,
+            message:
+              `dropBranch() rejected ${merge.conflicts.length} conflicting path(s) for checkpoint ${branchCheckpointId}`,
+          });
+        }
+
+        await this.rollbackWithoutReconcile(branchCheckpointId);
+      });
+    } finally {
+      this.releaseBranchOperationLock(branchCheckpointId);
+    }
+  }
+
+  public getCheckpointLineage(checkpointId: CheckpointId): HyperionCheckpointSummary[] {
+    this.assertNotDisposed("getCheckpointLineage()");
+    const lineage = this.collectLineageSummaries(checkpointId);
+
+    if (lineage.length === 0) {
+      throw new HyperionRollbackError(`Unknown checkpoint: ${checkpointId}`);
+    }
+
+    return lineage;
+  }
+
+  public listCheckpointChildren(
+    parentId: CheckpointId,
+    options: { includeInactive?: boolean } = {},
+  ): HyperionCheckpointSummary[] {
+    this.assertNotDisposed("listCheckpointChildren()");
+
+    return this.collectCheckpointSummaries(options.includeInactive ?? false)
+      .filter((summary) => summary.parentId === parentId)
+      .sort((first, second) => first.createdAt - second.createdAt);
+  }
+
+  public listBranchHeads(filter: HyperionCheckpointHeadFilter = {}): HyperionCheckpointSummary[] {
+    this.assertNotDisposed("listBranchHeads()");
+    const grouped = new Map<string, HyperionCheckpointSummary>();
+
+    for (const summary of this.collectCheckpointSummaries(filter.includeInactive ?? false)) {
+      if (!summary.branchId) {
+        continue;
       }
 
-      this.cleanupCheckpointStorage(checkpointId);
-    } catch (error) {
-      throw this.normalizeOperationalError("rollback()", error);
+      if (filter.branchId && summary.branchId !== filter.branchId) {
+        continue;
+      }
+
+      if (filter.subagentId && summary.subagentId !== filter.subagentId) {
+        continue;
+      }
+
+      const summaryAgentId = summary.agentId ?? summary.subagentId;
+
+      if (filter.agentId && summaryAgentId !== filter.agentId) {
+        continue;
+      }
+
+      const existing = grouped.get(summary.branchId);
+      if (!existing || summary.createdAt >= existing.createdAt) {
+        grouped.set(summary.branchId, summary);
+      }
+    }
+
+    return [...grouped.values()].sort((first, second) => first.branchId?.localeCompare(second.branchId ?? "") ?? 0);
+  }
+
+  public listSubagentHeads(filter: HyperionCheckpointHeadFilter = {}): HyperionCheckpointSummary[] {
+    this.assertNotDisposed("listSubagentHeads()");
+    const grouped = new Map<string, HyperionCheckpointSummary>();
+
+    for (const summary of this.collectCheckpointSummaries(filter.includeInactive ?? false)) {
+      const summarySubagentId = summary.subagentId ?? summary.agentId;
+
+      if (!summarySubagentId) {
+        continue;
+      }
+
+      if (filter.subagentId && summarySubagentId !== filter.subagentId) {
+        continue;
+      }
+
+      if (filter.branchId && summary.branchId !== filter.branchId) {
+        continue;
+      }
+
+      if (filter.agentId && summarySubagentId !== filter.agentId) {
+        continue;
+      }
+
+      const existing = grouped.get(summarySubagentId);
+      if (!existing || summary.createdAt >= existing.createdAt) {
+        grouped.set(summarySubagentId, summary);
+      }
+    }
+
+    return [...grouped.values()].sort((first, second) =>
+      (first.subagentId ?? first.agentId ?? "").localeCompare(
+        second.subagentId ?? second.agentId ?? "",
+      ),
+    );
+  }
+
+  public async rollback(checkpointId: CheckpointId): Promise<void> {
+    this.assertNotDisposed("rollback()");
+    this.acquireBranchOperationLock(checkpointId, "rollback()");
+
+    try {
+      await this.withBranchLifecycleLock("rollback()", async () => {
+        const checkpoint = this.requireActiveCheckpoint(checkpointId);
+        const targetCheckpoint = this.resolveDefaultMergeTarget(checkpoint);
+        const merge = this.planBranchMerge({
+          source: checkpoint,
+          ...(targetCheckpoint === undefined ? {} : { target: targetCheckpoint }),
+          conflictMode: "reject",
+          contenders: this.collectBranchMergeContenders(checkpoint, targetCheckpoint),
+        });
+
+        if (merge.conflicts.length > 0) {
+          throw new HyperionBranchConflictError({
+            sourceCheckpointId: checkpointId,
+            conflicts: merge.conflicts,
+            message:
+              `rollback() rejected ${merge.conflicts.length} conflicting path(s) for checkpoint ${checkpointId}`,
+          });
+        }
+
+        await this.rollbackInternal(checkpointId, true, "rollback()");
+      });
+    } finally {
+      this.releaseBranchOperationLock(checkpointId);
     }
   }
 
@@ -426,14 +715,44 @@ export class HyperionWorkspace {
       this.runCapacityGarbageCollection();
       this.checkpointStore.ensureCapacityAvailable();
 
-      const checkpoint = this.checkpointStore.restoreCheckpoint({
+      const restoreInput: Parameters<CheckpointStore["restoreCheckpoint"]>[0] = {
         id: checkpointId,
         baseline: stateManifestFromJournal(journal),
         dirty: dirtyMapFromJournal(journal),
         storageNamespace: join(this.config.sessionRoot, checkpointId),
         status: journal.status === "rolling-back" ? "active" : journal.status,
         createdAt: journal.createdAt,
-      });
+      };
+
+      if (journal.parentId !== undefined) {
+        restoreInput.parentId = journal.parentId;
+      }
+
+      if (journal.branchId !== undefined) {
+        restoreInput.branchId = journal.branchId;
+      }
+
+      if (journal.subagentId !== undefined) {
+        restoreInput.subagentId = journal.subagentId;
+      }
+
+      if (journal.agentId !== undefined) {
+        restoreInput.agentId = journal.agentId;
+      }
+
+      if (journal.createdBy !== undefined) {
+        restoreInput.createdBy = journal.createdBy;
+      }
+
+      if (restoreInput.agentId === undefined && restoreInput.subagentId !== undefined) {
+        restoreInput.agentId = restoreInput.subagentId;
+      }
+
+      if (restoreInput.subagentId === undefined && restoreInput.agentId !== undefined) {
+        restoreInput.subagentId = restoreInput.agentId;
+      }
+
+      const checkpoint = this.checkpointStore.restoreCheckpoint(restoreInput);
       const storage = createCheckpointStorage({
         workspaceRoot: this.root,
         selectedKind: journal.strategy,
@@ -597,7 +916,42 @@ export class HyperionWorkspace {
     const diagnostics: HyperionCheckpointDiagnostics = {
       checkpointId: checkpoint.id,
       status: checkpoint.status,
+      createdAt: checkpoint.createdAt,
     };
+
+    if (checkpoint.parentId) {
+      diagnostics.parentId = checkpoint.parentId;
+    }
+
+    if (checkpoint.branchId) {
+      diagnostics.branchId = checkpoint.branchId;
+    }
+
+    if (checkpoint.subagentId) {
+      diagnostics.subagentId = checkpoint.subagentId;
+    }
+
+    if (checkpoint.agentId) {
+      diagnostics.agentId = checkpoint.agentId;
+    }
+
+    if (checkpoint.createdBy) {
+      diagnostics.createdBy = checkpoint.createdBy;
+    }
+
+    if (diagnostics.subagentId === undefined && diagnostics.agentId !== undefined) {
+      diagnostics.subagentId = diagnostics.agentId;
+    }
+
+    if (diagnostics.agentId === undefined && diagnostics.subagentId !== undefined) {
+      diagnostics.agentId = diagnostics.subagentId;
+    }
+
+    const lineage = this.collectLineageSummaries(checkpoint.id);
+    if (lineage.length > 0) {
+      diagnostics.lineage = lineage;
+    }
+
     const storage = this.checkpointStorage.get(checkpoint.id);
 
     if (storage) {
@@ -857,6 +1211,376 @@ export class HyperionWorkspace {
     }
 
     return dirtyEntry;
+  }
+
+  private resolveSnapshotOptions(options: HyperionSnapshotOptions): HyperionSnapshotOptions {
+    const resolved: HyperionSnapshotOptions = {};
+
+    if (options.parentId !== undefined) {
+      this.requireActiveCheckpoint(options.parentId);
+      resolved.parentId = options.parentId;
+    }
+
+    if (options.branchId !== undefined) {
+      if (typeof options.branchId !== "string" || options.branchId.trim() === "") {
+        throw new HyperionPathError("snapshot() branchId must be a non-empty string");
+      }
+
+      resolved.branchId = options.branchId.trim();
+    }
+
+    if (options.subagentId !== undefined) {
+      if (typeof options.subagentId !== "string" || options.subagentId.trim() === "") {
+        throw new HyperionPathError("snapshot() subagentId must be a non-empty string");
+      }
+
+      resolved.subagentId = options.subagentId.trim();
+    }
+
+    if (options.agentId !== undefined) {
+      if (typeof options.agentId !== "string" || options.agentId.trim() === "") {
+        throw new HyperionPathError("snapshot() agentId must be a non-empty string");
+      }
+
+      resolved.agentId = options.agentId.trim();
+    }
+
+    if (options.createdBy !== undefined) {
+      if (!isCheckpointCreatedBy(options.createdBy)) {
+        throw new HyperionPathError(`snapshot() createdBy is invalid: ${String(options.createdBy)}`);
+      }
+
+      resolved.createdBy = options.createdBy;
+    }
+
+    if (resolved.agentId === undefined && resolved.subagentId !== undefined) {
+      resolved.agentId = resolved.subagentId;
+    }
+
+    if (resolved.subagentId === undefined && resolved.agentId !== undefined) {
+      resolved.subagentId = resolved.agentId;
+    }
+
+    return resolved;
+  }
+
+  private getCheckpointSummary(checkpointId: CheckpointId): HyperionCheckpointSummary | undefined {
+    const checkpoint = this.checkpointStore.getCheckpoint(checkpointId);
+
+    if (checkpoint) {
+      return this.checkpointToSummary(checkpoint);
+    }
+
+    if (!this.config.durableAttemptJournals) {
+      return undefined;
+    }
+
+    const journal = this.attemptJournalStore.read(checkpointId);
+
+    if (!journal) {
+      return undefined;
+    }
+
+    const summary: HyperionCheckpointSummary = {
+      checkpointId: journal.checkpointId,
+      status: journal.status,
+      createdAt: journal.createdAt,
+      source: "journal",
+    };
+
+    if (journal.parentId) {
+      summary.parentId = journal.parentId;
+    }
+
+    if (journal.branchId) {
+      summary.branchId = journal.branchId;
+    }
+
+    if (journal.subagentId) {
+      summary.subagentId = journal.subagentId;
+    }
+
+    if (journal.agentId) {
+      summary.agentId = journal.agentId;
+    }
+
+    if (journal.createdBy) {
+      summary.createdBy = journal.createdBy;
+    }
+
+    if (summary.subagentId === undefined && summary.agentId !== undefined) {
+      summary.subagentId = summary.agentId;
+    }
+
+    if (summary.agentId === undefined && summary.subagentId !== undefined) {
+      summary.agentId = summary.subagentId;
+    }
+
+    return summary;
+  }
+
+  private collectCheckpointSummaries(includeInactive: boolean): HyperionCheckpointSummary[] {
+    const summaries = new Map<CheckpointId, HyperionCheckpointSummary>();
+
+    for (const checkpoint of this.checkpointStore.getCheckpoints()) {
+      if (!includeInactive && checkpoint.status !== "active" && checkpoint.status !== "rolling-back") {
+        continue;
+      }
+
+      summaries.set(checkpoint.id, this.checkpointToSummary(checkpoint));
+    }
+
+    if (!this.config.durableAttemptJournals) {
+      return [...summaries.values()];
+    }
+
+    for (const attempt of this.attemptJournalStore.recover()) {
+      if (!includeInactive && attempt.status !== "active" && attempt.status !== "rolling-back") {
+        continue;
+      }
+
+      if (!summaries.has(attempt.checkpointId)) {
+        summaries.set(attempt.checkpointId, this.recoverableAttemptToSummary(attempt));
+      }
+    }
+
+    return [...summaries.values()];
+  }
+
+  private checkpointToSummary(checkpoint: StoredCheckpoint): HyperionCheckpointSummary {
+    const summary: HyperionCheckpointSummary = {
+      checkpointId: checkpoint.id,
+      status: checkpoint.status,
+      createdAt: checkpoint.createdAt,
+      source: "active",
+    };
+
+    if (checkpoint.parentId) {
+      summary.parentId = checkpoint.parentId;
+    }
+
+    if (checkpoint.branchId) {
+      summary.branchId = checkpoint.branchId;
+    }
+
+    if (checkpoint.subagentId) {
+      summary.subagentId = checkpoint.subagentId;
+    }
+
+    if (checkpoint.agentId) {
+      summary.agentId = checkpoint.agentId;
+    }
+
+    if (checkpoint.createdBy) {
+      summary.createdBy = checkpoint.createdBy;
+    }
+
+    if (summary.subagentId === undefined && summary.agentId !== undefined) {
+      summary.subagentId = summary.agentId;
+    }
+
+    if (summary.agentId === undefined && summary.subagentId !== undefined) {
+      summary.agentId = summary.subagentId;
+    }
+
+    return summary;
+  }
+
+  private recoverableAttemptToSummary(attempt: RecoverableAttempt): HyperionCheckpointSummary {
+    const summary: HyperionCheckpointSummary = {
+      checkpointId: attempt.checkpointId,
+      status: attempt.status,
+      createdAt: attempt.createdAt,
+      source: "journal",
+    };
+
+    if (attempt.parentId) {
+      summary.parentId = attempt.parentId;
+    }
+
+    if (attempt.branchId) {
+      summary.branchId = attempt.branchId;
+    }
+
+    if (attempt.subagentId) {
+      summary.subagentId = attempt.subagentId;
+    }
+
+    if (attempt.agentId) {
+      summary.agentId = attempt.agentId;
+    }
+
+    if (attempt.createdBy) {
+      summary.createdBy = attempt.createdBy;
+    }
+
+    if (summary.subagentId === undefined && summary.agentId !== undefined) {
+      summary.subagentId = summary.agentId;
+    }
+
+    if (summary.agentId === undefined && summary.subagentId !== undefined) {
+      summary.agentId = summary.subagentId;
+    }
+
+    return summary;
+  }
+
+  private collectLineageSummaries(checkpointId: CheckpointId): HyperionCheckpointSummary[] {
+    const lineage: HyperionCheckpointSummary[] = [];
+    const visited = new Set<CheckpointId>();
+    let current = this.getCheckpointSummary(checkpointId);
+
+    while (current) {
+      lineage.unshift(current);
+
+      if (!current.parentId || visited.has(current.parentId)) {
+        break;
+      }
+
+      visited.add(current.checkpointId);
+      current = this.getCheckpointSummary(current.parentId);
+    }
+
+    return lineage;
+  }
+
+  private resolveDefaultMergeTarget(source: StoredCheckpoint): StoredCheckpoint | undefined {
+    if (!source.parentId) {
+      return undefined;
+    }
+
+    const parentCheckpoint = this.checkpointStore.getCheckpoint(source.parentId);
+
+    if (!parentCheckpoint) {
+      return undefined;
+    }
+
+    if (parentCheckpoint.status === "disposed" || parentCheckpoint.status === "promoted") {
+      return undefined;
+    }
+
+    return parentCheckpoint;
+  }
+
+  private collectBranchMergeContenders(
+    source: StoredCheckpoint,
+    target?: StoredCheckpoint,
+  ): StoredCheckpoint[] {
+    const siblingParentId = source.parentId;
+
+    return this.checkpointStore.getCheckpoints().filter((checkpoint) => {
+      if (checkpoint.id === source.id) {
+        return false;
+      }
+
+      if (checkpoint.status !== "active" && checkpoint.status !== "rolling-back") {
+        return false;
+      }
+
+      if (target?.id === checkpoint.id) {
+        return true;
+      }
+
+      if (!siblingParentId) {
+        return false;
+      }
+
+      return checkpoint.parentId === siblingParentId;
+    });
+  }
+
+  private planBranchMerge(input: {
+    source: StoredCheckpoint;
+    target?: StoredCheckpoint;
+    contenders: StoredCheckpoint[];
+    conflictMode: HyperionBranchConflictMode;
+  }): HyperionBranchMergeResult {
+    const mergeInput: BranchMergePlanInput = {
+      source: input.source,
+      ...(input.target === undefined ? {} : { target: input.target }),
+      contenders: input.contenders,
+      conflictMode: input.conflictMode,
+    };
+
+    return this.branchMergeEngine.plan(mergeInput);
+  }
+
+  private acquireBranchOperationLock(checkpointId: CheckpointId, operation: string): void {
+    if (this.branchOperationLocks.has(checkpointId)) {
+      throw new HyperionRollbackError(
+        `${operation} is already active for checkpoint: ${checkpointId}`,
+      );
+    }
+
+    this.branchOperationLocks.add(checkpointId);
+  }
+
+  private releaseBranchOperationLock(checkpointId: CheckpointId): void {
+    this.branchOperationLocks.delete(checkpointId);
+  }
+
+  private async withBranchLifecycleLock<T>(
+    _operation: string,
+    callback: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.branchLifecycleQueue;
+    let release: (() => void) | undefined;
+
+    this.branchLifecycleQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    await previous;
+
+    try {
+      return await callback();
+    } finally {
+      release?.();
+    }
+  }
+
+  private async rollbackWithoutReconcile(checkpointId: CheckpointId): Promise<void> {
+    await this.rollbackInternal(checkpointId, false, "dropBranch()");
+  }
+
+  private async rollbackInternal(
+    checkpointId: CheckpointId,
+    withReconcile: boolean,
+    operation: string,
+  ): Promise<void> {
+    const checkpoint = this.requireActiveCheckpoint(checkpointId);
+    const storage = this.requireCheckpointStorage(checkpointId);
+    const ghostDirectoryCleaner = new GhostDirectoryCleaner({
+      workspaceRoot: this.root,
+      baseline: checkpoint.baseline,
+      ignoreMatcher: this.ignoreMatcher,
+    });
+
+    try {
+      try {
+        this.writeAttemptJournalBestEffort(checkpoint);
+        await this.rollbackEngine.rollback({
+          checkpoint,
+          storage,
+          ghostDirectoryCleaner,
+          reconcile: withReconcile
+            ? async () => {
+                await this.reconcile(checkpointId);
+              }
+            : async () => {
+                return;
+              },
+        });
+        this.writeAttemptJournalBestEffort(checkpoint);
+      } catch (error) {
+        this.writeAttemptJournalBestEffort(checkpoint);
+        throw error;
+      }
+
+      this.cleanupCheckpointStorage(checkpointId);
+    } catch (error) {
+      throw this.normalizeOperationalError(operation, error);
+    }
   }
 
   private get activeCheckpointCount(): number {
@@ -1167,6 +1891,17 @@ function backupRecordFileType(
   }
 
   return undefined;
+}
+
+function isCheckpointCreatedBy(value: unknown): value is HyperionCheckpointCreatedBy {
+  return (
+    value === "snapshot" ||
+    value === "fork" ||
+    value === "run-attempt" ||
+    value === "run-in-branch" ||
+    value === "rehydrate" ||
+    value === "unknown"
+  );
 }
 
 function formatUnknownError(error: unknown): string {

@@ -8,6 +8,7 @@ export {
 export {
   HyperionAgentSession,
   HyperionAttemptContextError,
+  HyperionAttemptInProgressError,
   HyperionAttemptRollbackError,
   HyperionExecError,
   HyperionExecOptionsError,
@@ -23,6 +24,7 @@ export type {
   HyperionExecResult,
 } from "./agent-session.js";
 export {
+  HyperionBranchConflictError,
   HyperionCapacityError,
   HyperionError,
   HyperionIgnoredPathError,
@@ -35,14 +37,23 @@ export type {
   CheckpointId,
   DirtyEntry,
   GitIndexEntry,
+  HyperionBranchConflictMode,
+  HyperionBranchMergeResult,
+  HyperionBranchPathConflict,
+  HyperionBranchPromotionResult,
   HyperionConfig,
+  HyperionCheckpointCreatedBy,
+  HyperionCheckpointHeadFilter,
   HyperionCheckpointDiagnostics,
+  HyperionCheckpointSummary,
   HyperionDiagnostics,
   HyperionHotBufferDiagnostics,
   HyperionIgnoredWriteEvent,
+  HyperionPromoteBranchOptions,
   HyperionPromoteOptions,
   HyperionPromotionResult,
   HyperionStorageDiagnostics,
+  HyperionSnapshotOptions,
   HyperionToolOutputContract,
   HyperionToolOutputPath,
   HyperionWindowsVolumeDiagnostics,
@@ -55,3 +66,7 @@ export type {
   VfsMutationKind,
 } from "./types.js";
 export { HyperionWorkspace } from "./workspace.js";
+export type {
+  HyperionBranchContext,
+  HyperionBranchRunResult,
+} from "./workspace.js";

@@ -19,6 +19,8 @@ function assertThreshold(name, actual, minimum) {
 
 const stressCycles = readPositiveInteger("HYPERION_STRESS_CYCLES", 120);
 const stressConcurrency = readPositiveInteger("HYPERION_STRESS_CONCURRENCY", 6);
+const branchStressCycles = readPositiveInteger("HYPERION_BRANCH_STRESS_CYCLES", 20);
+const branchSubagents = readPositiveInteger("HYPERION_BRANCH_SUBAGENTS", 4);
 
 assertThreshold(
   "HYPERION_STRESS_CYCLES",
@@ -30,8 +32,22 @@ assertThreshold(
   stressConcurrency,
   readPositiveInteger("HYPERION_STRESS_MIN_CONCURRENCY", 1),
 );
+assertThreshold(
+  "HYPERION_BRANCH_STRESS_CYCLES",
+  branchStressCycles,
+  readPositiveInteger("HYPERION_BRANCH_STRESS_MIN_CYCLES", 1),
+);
+assertThreshold(
+  "HYPERION_BRANCH_SUBAGENTS",
+  branchSubagents,
+  readPositiveInteger("HYPERION_BRANCH_STRESS_MIN_SUBAGENTS", 2),
+);
 
-console.log(`Running reliability stress: cycles=${stressCycles}, concurrency=${stressConcurrency}`);
+console.log(
+  "Running reliability stress:" +
+    ` cycles=${stressCycles}, concurrency=${stressConcurrency},` +
+    ` branchCycles=${branchStressCycles}, branchSubagents=${branchSubagents}`,
+);
 
 execFileSync(
   process.execPath,
@@ -42,6 +58,19 @@ execFileSync(
       ...process.env,
       HYPERION_STRESS_CYCLES: String(stressCycles),
       HYPERION_STRESS_CONCURRENCY: String(stressConcurrency),
+    },
+  },
+);
+
+execFileSync(
+  process.execPath,
+  ["--test", ".test-dist/test/workspace-branch-contention-stress.test.js"],
+  {
+    stdio: "inherit",
+    env: {
+      ...process.env,
+      HYPERION_BRANCH_STRESS_CYCLES: String(branchStressCycles),
+      HYPERION_BRANCH_SUBAGENTS: String(branchSubagents),
     },
   },
 );

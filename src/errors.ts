@@ -1,5 +1,8 @@
+import type { CheckpointId, HyperionBranchPathConflict } from "./types.js";
+
 export type HyperionErrorCode =
   | "HYPERION_CAPACITY"
+  | "HYPERION_BRANCH_CONFLICT"
   | "HYPERION_INTEGRITY"
   | "HYPERION_IGNORED_PATH"
   | "HYPERION_PATH"
@@ -33,6 +36,27 @@ export class HyperionCapacityError extends HyperionError {
   public constructor(message: string, context: HyperionErrorContext = {}) {
     super(message, "HYPERION_CAPACITY", context);
     this.name = "HyperionCapacityError";
+  }
+}
+
+export class HyperionBranchConflictError extends HyperionError {
+  public readonly sourceCheckpointId: CheckpointId;
+  public readonly conflicts: HyperionBranchPathConflict[];
+
+  public constructor(input: {
+    sourceCheckpointId: CheckpointId;
+    conflicts: HyperionBranchPathConflict[];
+    message?: string;
+  }) {
+    const message = input.message ??
+      `Branch conflict detected for checkpoint ${input.sourceCheckpointId}`;
+
+    super(message, "HYPERION_BRANCH_CONFLICT", {
+      reason: "BRANCH_PATH_CONFLICT",
+    });
+    this.name = "HyperionBranchConflictError";
+    this.sourceCheckpointId = input.sourceCheckpointId;
+    this.conflicts = [...input.conflicts];
   }
 }
 

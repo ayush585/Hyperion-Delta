@@ -15,6 +15,7 @@ import { afterEach, describe, it } from "node:test";
 import {
   HyperionAgentSession,
   HyperionAttemptContextError,
+  HyperionAttemptInProgressError,
   HyperionExecError,
   HyperionExecOptionsError,
   HyperionExecTimeoutError,
@@ -86,6 +87,66 @@ describe("HyperionAgentSession", () => {
 
     assert.equal(typeof checkpointId, "string");
     assert.notEqual(checkpointId.length, 0);
+  });
+
+  it("delegates fork and lineage/head helpers to the workspace", async () => {
+    const root = createTempWorkspace();
+    const session = createSession(root);
+    const parentId = await session.snapshot({
+      branchId: "branch-a",
+      subagentId: "planner",
+    });
+    const childId = await session.fork(parentId);
+    const reviewerId = await session.fork(parentId, { subagentId: "reviewer" });
+
+    const lineage = session.getCheckpointLineage(childId);
+    const children = session.listCheckpointChildren(parentId);
+    const branchHeads = session.listBranchHeads({ branchId: "branch-a" });
+    const subagentHeads = session.listSubagentHeads({ branchId: "branch-a" });
+
+    assert.deepEqual(lineage.map((summary) => summary.checkpointId), [parentId, childId]);
+    assert.deepEqual(children.map((summary) => summary.checkpointId), [childId, reviewerId]);
+    assert.equal(branchHeads[0]?.checkpointId, reviewerId);
+    assert.equal(
+      subagentHeads.find((summary) => summary.subagentId === "planner")?.checkpointId,
+      childId,
+    );
+    assert.equal(
+      subagentHeads.find((summary) => summary.subagentId === "reviewer")?.checkpointId,
+      reviewerId,
+    );
+  });
+
+  it("delegates runInBranch(), promoteBranch(), and dropBranch()", async () => {
+    const root = createTempWorkspace();
+    const session = createSession(root);
+    const mainId = await session.snapshot({ branchId: "main", agentId: "lead" });
+    const featureId = await session.fork(mainId, {
+      branchId: "feature-a",
+      agentId: "agent-a",
+    });
+
+    const runResult = await session.runInBranch(featureId, async () => {
+      writeFileSync(path.join(root, "feature-created.txt"), "created");
+      return "done";
+    });
+
+    assert.equal(runResult.result, "done");
+    assert.equal(runResult.reconcileResult.created.includes("feature-created.txt"), true);
+
+    const promoteResult = await session.promoteBranch(featureId, { conflictMode: "reject" });
+
+    assert.equal(promoteResult.checkpointId, featureId);
+    assert.equal(promoteResult.merge.conflicts.length, 0);
+    assert.equal(promoteResult.merge.appliedPaths.includes("feature-created.txt"), true);
+
+    const scratchId = await session.snapshot({ branchId: "scratch", agentId: "agent-drop" });
+    await session.runInBranch(scratchId, async () => {
+      writeFileSync(path.join(root, "scratch-created.txt"), "created");
+    });
+    await session.dropBranch(scratchId);
+
+    assert.equal(existsSync(path.join(root, "scratch-created.txt")), false);
   });
 
   it("rolls back a VFS-backed failed attempt", async () => {
@@ -225,6 +286,55 @@ describe("HyperionAgentSession", () => {
     assert.equal(attemptResult.reconcileResult?.created.includes("created.txt"), true);
     assert.equal(session.lastReconcileResult, attemptResult.reconcileResult);
     assert.equal(readFileSync(path.join(root, "created.txt"), "utf8"), "created");
+  });
+
+  it("runAttempt can fork from parent checkpoints and preserve lineage", async () => {
+    const root = createTempWorkspace();
+    const session = createSession(root);
+    const parentId = await session.snapshot({
+      branchId: "branch-a",
+      subagentId: "planner",
+    });
+
+    const inheritedAttempt = await session.runAttempt(
+      async () => "ok",
+      { parentCheckpointId: parentId },
+    );
+    const inheritedSummary = session.getCheckpointLineage(inheritedAttempt.checkpointId).at(-1);
+
+    assert.equal(inheritedSummary?.parentId, parentId);
+    assert.equal(inheritedSummary?.branchId, "branch-a");
+    assert.equal(inheritedSummary?.subagentId, "planner");
+
+    const overriddenAttempt = await session.runAttempt(async () => "ok", {
+      parentCheckpointId: parentId,
+      branchId: "branch-b",
+      subagentId: "reviewer",
+    });
+    const overriddenSummary = session.getCheckpointLineage(overriddenAttempt.checkpointId).at(-1);
+
+    assert.equal(overriddenSummary?.parentId, parentId);
+    assert.equal(overriddenSummary?.branchId, "branch-b");
+    assert.equal(overriddenSummary?.subagentId, "reviewer");
+  });
+
+  it("fails fast when runAttempt is called reentrantly", async () => {
+    const root = createTempWorkspace();
+    const session = createSession(root);
+
+    await session.runAttempt(async ({ checkpointId }) => {
+      await assert.rejects(
+        () => session.runAttempt(async () => "nested"),
+        (error) => {
+          assert.equal(error instanceof HyperionAttemptInProgressError, true);
+          assert.equal(
+            (error as HyperionAttemptInProgressError).activeCheckpointId,
+            checkpointId,
+          );
+          return true;
+        },
+      );
+    });
   });
 
   it("rolls back VFS and child-process writes when an attempt throws", async () => {
@@ -490,6 +600,10 @@ describe("HyperionAgentSession", () => {
     const attemptOptions: HyperionAttemptOptions = {
       rollbackOnThrow: true,
       reconcileOnSuccess: true,
+      parentCheckpointId: checkpointId,
+      branchId: "branch-a",
+      subagentId: "planner",
+      agentId: "agent-planner",
     };
     const execOptions: HyperionExecOptions = {
       captureOutput: true,
@@ -515,6 +629,7 @@ describe("HyperionAgentSession", () => {
 
     assert.equal(diagnostics.lastReconcileResult?.checkpointId, checkpointId);
     assert.equal(attemptOptions.rollbackOnThrow, true);
+    assert.equal(attemptOptions.agentId, "agent-planner");
     assert.equal(execOptions.captureOutput, true);
     assert.equal(execResult.exitCode, 0);
     assert.equal(attemptResult.result, "ok");

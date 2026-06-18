@@ -20,6 +20,22 @@ export interface HyperionConfig {
   durableAttemptJournals?: boolean;
 }
 
+export interface HyperionSnapshotOptions {
+  parentId?: CheckpointId;
+  branchId?: string;
+  subagentId?: string;
+  agentId?: string;
+  createdBy?: HyperionCheckpointCreatedBy;
+}
+
+export type HyperionCheckpointCreatedBy =
+  | "snapshot"
+  | "fork"
+  | "run-attempt"
+  | "run-in-branch"
+  | "rehydrate"
+  | "unknown";
+
 export interface ResolvedHyperionConfig {
   workspaceRoot: string;
   useTmpfs: boolean;
@@ -84,6 +100,10 @@ export interface DirtyEntry {
 export interface Checkpoint {
   id: CheckpointId;
   parentId?: CheckpointId;
+  branchId?: string;
+  subagentId?: string;
+  agentId?: string;
+  createdBy?: HyperionCheckpointCreatedBy;
   baseline: StateManifest;
   dirty: Map<string, DirtyEntry>;
   storageNamespace: string;
@@ -92,8 +112,32 @@ export interface Checkpoint {
   createdAt: number;
 }
 
+export interface HyperionCheckpointSummary {
+  checkpointId: CheckpointId;
+  parentId?: CheckpointId;
+  branchId?: string;
+  subagentId?: string;
+  agentId?: string;
+  createdBy?: HyperionCheckpointCreatedBy;
+  status: Checkpoint["status"];
+  createdAt: number;
+  source: "active" | "journal";
+}
+
+export interface HyperionCheckpointHeadFilter {
+  branchId?: string;
+  subagentId?: string;
+  agentId?: string;
+  includeInactive?: boolean;
+}
+
 export interface RecoverableAttempt {
   checkpointId: CheckpointId;
+  parentId?: CheckpointId;
+  branchId?: string;
+  subagentId?: string;
+  agentId?: string;
+  createdBy?: HyperionCheckpointCreatedBy;
   sessionId: string;
   createdAt: number;
   updatedAt: number;
@@ -108,6 +152,36 @@ export interface RecoverableAttempt {
 
 export interface HyperionPromoteOptions {
   exportPatch?: boolean;
+}
+
+export type HyperionBranchConflictMode = "reject";
+
+export interface HyperionBranchPathConflict {
+  relativePath: string;
+  sourceCheckpointId: CheckpointId;
+  targetCheckpointId: CheckpointId;
+  sourceKind: DirtyEntry["kind"];
+  targetKind: DirtyEntry["kind"];
+  sourceAgentId?: string;
+  targetAgentId?: string;
+}
+
+export interface HyperionBranchMergeResult {
+  sourceCheckpointId: CheckpointId;
+  targetCheckpointId?: CheckpointId;
+  conflictMode: HyperionBranchConflictMode;
+  mergedAt: number;
+  appliedPaths: string[];
+  conflicts: HyperionBranchPathConflict[];
+}
+
+export interface HyperionPromoteBranchOptions extends HyperionPromoteOptions {
+  targetCheckpointId?: CheckpointId;
+  conflictMode?: HyperionBranchConflictMode;
+}
+
+export interface HyperionBranchPromotionResult extends HyperionPromotionResult {
+  merge: HyperionBranchMergeResult;
 }
 
 export interface HyperionPromotionResult {
@@ -159,7 +233,14 @@ export interface HyperionIgnoredWriteEvent {
 
 export interface HyperionCheckpointDiagnostics {
   checkpointId: CheckpointId;
+  parentId?: CheckpointId;
+  branchId?: string;
+  subagentId?: string;
+  agentId?: string;
+  createdBy?: HyperionCheckpointCreatedBy;
+  createdAt?: number;
   status: Checkpoint["status"];
+  lineage?: HyperionCheckpointSummary[];
   storage?: HyperionStorageDiagnostics;
 }
 

@@ -74,7 +74,15 @@ Core methods:
 - `track(path | paths)`: manually register paths for future integrations that cannot use interception.
 - `declareToolOutputs(contract)`: declare exact generated or ignored tool outputs so they can be tracked without broad ignored-root scans.
 - `getDiagnostics()`: return a read-only snapshot of strategy, storage, hot-buffer, Windows volume, checkpoint, and ignored-write diagnostics.
-- `snapshot()`: capture a checkpoint and return a `CheckpointId`.
+- `snapshot(options?)`: capture a checkpoint and return a `CheckpointId`, with optional `parentId`, `branchId`, and `subagentId` lineage tags.
+- `fork(parentCheckpointId, options?)`: create a child checkpoint from an active parent and inherit lineage tags unless overridden.
+- `runInBranch(branchCheckpointId, callback)`: execute branch-scoped work and reconcile that branch before returning.
+- `promoteBranch(branchCheckpointId, options?)`: promote a branch checkpoint with deterministic merge planning; current conflict mode is reject-only.
+- `dropBranch(branchCheckpointId)`: drop a branch with rollback semantics guarded by overlap conflict checks.
+- `getCheckpointLineage(checkpointId)`: return oldest-to-newest checkpoint ancestry.
+- `listCheckpointChildren(parentId, options?)`: list direct children of a checkpoint.
+- `listBranchHeads(filter?)`: list latest checkpoint heads grouped by `branchId`.
+- `listSubagentHeads(filter?)`: list latest checkpoint heads grouped by `subagentId`.
 - `reconcile(checkpointId?)`: refresh dirty-set state after child-process or native-tool writes.
 - `rollback(checkpointId)`: reconcile, restore dirty paths, delete created paths, and clean ghost directories.
 - `recoverAttempts()`: inspect durable checkpoint journals and whether they can be rehydrated.
@@ -85,10 +93,11 @@ Core methods:
 
 Agent-session helpers:
 
-- `runAttempt(callback, options?)`: wrap one agent attempt with automatic snapshot, reconciliation, rollback-on-throw, and diagnostics.
+- `runAttempt(callback, options?)`: wrap one agent attempt with automatic snapshot/fork, reconciliation, rollback-on-throw, diagnostics, and fail-fast same-session reentrancy protection.
 - `exec(command, args, options?)`: run an explicit executable plus argument array without shell-string execution. Inside `runAttempt()`, the context `exec()` reconciles the active checkpoint after the process exits.
+- `runInBranch(branchCheckpointId, callback)`, `promoteBranch(...)`, and `dropBranch(...)`: convenience wrappers over workspace branch lifecycle APIs.
 
-Public types and errors are exported from the package root, including `HyperionConfig`, `ReconcileResult`, `StorageStrategyKind`, `HyperionError`, `HyperionCapacityError`, `HyperionIntegrityError`, `HyperionPathError`, and `HyperionRollbackError`.
+Public types and errors are exported from the package root, including `HyperionConfig`, `ReconcileResult`, `StorageStrategyKind`, `HyperionError`, `HyperionCapacityError`, `HyperionIntegrityError`, `HyperionPathError`, `HyperionRollbackError`, and `HyperionBranchConflictError`.
 
 Small regular-file backups use a bounded in-memory Hot Dirty Buffer by default before spilling to the selected physical strategy. Tune it with `useHotBuffer`, `hotBufferMaxFileBytes`, `hotBufferMaxTotalBytes`, and `hotBufferMaxFiles`; the exported defaults are `256 KiB` per file, `8 MiB` total, and `1024` files.
 
@@ -153,6 +162,8 @@ npm run release:final
 ```
 
 This runs the full release check, verifies the zero-runtime-dependency audit path with `npm audit --omit=dev`, and prints the final dry-run package contents.
+
+For a copy-ready release runbook, use `RELEASE_NEXT.md`.
 
 For reliability gates (failure injection, fuzz smoke, and stress smoke):
 

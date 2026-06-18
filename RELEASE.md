@@ -2,6 +2,8 @@
 
 Hyperion Delta is prepared for npm trusted publishing with provenance, but this repository cannot publish until npm-side trusted publisher settings are configured by a package maintainer.
 
+For a reusable per-release template, see `RELEASE_NEXT.md`.
+
 ## Local Pre-Publish Gate
 
 1. Start from a clean working tree on `main`.
@@ -43,6 +45,6 @@ The workflow uses OIDC with `id-token: write` and `contents: read`. Do not add n
 ## Current Release Target
 
 - Package: `hyperion-delta`
-- Version: `0.1.6`
+- Version: `0.1.7`
 - Runtime: Node.js 20+
 - Runtime dependencies: none

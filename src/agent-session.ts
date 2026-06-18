@@ -1,12 +1,21 @@
 import { spawn, type ChildProcess, type StdioOptions } from "node:child_process";
 
-import { HyperionWorkspace } from "./workspace.js";
+import {
+  HyperionWorkspace,
+  type HyperionBranchContext,
+  type HyperionBranchRunResult,
+} from "./workspace.js";
 import type {
   CheckpointId,
+  HyperionBranchPromotionResult,
+  HyperionCheckpointHeadFilter,
+  HyperionCheckpointSummary,
   HyperionConfig,
   HyperionDiagnostics,
+  HyperionPromoteBranchOptions,
   HyperionPromoteOptions,
   HyperionPromotionResult,
+  HyperionSnapshotOptions,
   HyperionToolOutputContract,
   RecoverableAttempt,
   ReconcileResult,
@@ -35,6 +44,7 @@ export type HyperionAgentSessionErrorCode =
   | "HYPERION_EXEC"
   | "HYPERION_EXEC_OPTIONS"
   | "HYPERION_EXEC_TIMEOUT"
+  | "HYPERION_ATTEMPT_IN_PROGRESS"
   | "HYPERION_ATTEMPT_CONTEXT"
   | "HYPERION_ATTEMPT_ROLLBACK";
 
@@ -54,6 +64,10 @@ export interface HyperionAttemptContext {
 export interface HyperionAttemptOptions {
   rollbackOnThrow?: boolean;
   reconcileOnSuccess?: boolean;
+  parentCheckpointId?: CheckpointId;
+  branchId?: string;
+  subagentId?: string;
+  agentId?: string;
 }
 
 export interface HyperionAttemptResult<T> {
@@ -126,6 +140,23 @@ export class HyperionAttemptContextError extends Error {
   }
 }
 
+export class HyperionAttemptInProgressError extends Error {
+  public readonly code: HyperionAgentSessionErrorCode = "HYPERION_ATTEMPT_IN_PROGRESS";
+  public readonly activeCheckpointId?: CheckpointId;
+
+  public constructor(activeCheckpointId?: CheckpointId) {
+    super(
+      activeCheckpointId
+        ? `runAttempt() is already active for checkpoint ${activeCheckpointId}`
+        : "runAttempt() is already active",
+    );
+    this.name = "HyperionAttemptInProgressError";
+    if (activeCheckpointId) {
+      this.activeCheckpointId = activeCheckpointId;
+    }
+  }
+}
+
 export class HyperionAttemptRollbackError extends Error {
   public readonly code: HyperionAgentSessionErrorCode = "HYPERION_ATTEMPT_ROLLBACK";
   public readonly checkpointId: CheckpointId;
@@ -155,6 +186,7 @@ export class HyperionAgentSession {
 
   private lastReconcileResultValue?: ReconcileResult;
   private lastRollbackMsValue?: number;
+  private activeAttemptCheckpointId: CheckpointId | "pending" | undefined;
 
   public constructor(rootOrConfig: string | HyperionConfig) {
     this.workspace = new HyperionWorkspace(rootOrConfig);
@@ -200,8 +232,52 @@ export class HyperionAgentSession {
     return diagnostics;
   }
 
-  public snapshot(): Promise<CheckpointId> {
-    return this.workspace.snapshot();
+  public snapshot(options: HyperionSnapshotOptions = {}): Promise<CheckpointId> {
+    return this.workspace.snapshot(options);
+  }
+
+  public fork(
+    parentCheckpointId?: CheckpointId,
+    options: Omit<HyperionSnapshotOptions, "parentId"> = {},
+  ): Promise<CheckpointId> {
+    return this.workspace.fork(parentCheckpointId, options);
+  }
+
+  public runInBranch<T>(
+    branchCheckpointId: CheckpointId,
+    callback: (context: HyperionBranchContext) => T | Promise<T>,
+  ): Promise<HyperionBranchRunResult<T>> {
+    return this.workspace.runInBranch(branchCheckpointId, callback);
+  }
+
+  public promoteBranch(
+    branchCheckpointId: CheckpointId,
+    options: HyperionPromoteBranchOptions = {},
+  ): Promise<HyperionBranchPromotionResult> {
+    return this.workspace.promoteBranch(branchCheckpointId, options);
+  }
+
+  public dropBranch(branchCheckpointId: CheckpointId): Promise<void> {
+    return this.workspace.dropBranch(branchCheckpointId);
+  }
+
+  public getCheckpointLineage(checkpointId: CheckpointId): HyperionCheckpointSummary[] {
+    return this.workspace.getCheckpointLineage(checkpointId);
+  }
+
+  public listCheckpointChildren(
+    parentId: CheckpointId,
+    options: { includeInactive?: boolean } = {},
+  ): HyperionCheckpointSummary[] {
+    return this.workspace.listCheckpointChildren(parentId, options);
+  }
+
+  public listBranchHeads(filter: HyperionCheckpointHeadFilter = {}): HyperionCheckpointSummary[] {
+    return this.workspace.listBranchHeads(filter);
+  }
+
+  public listSubagentHeads(filter: HyperionCheckpointHeadFilter = {}): HyperionCheckpointSummary[] {
+    return this.workspace.listSubagentHeads(filter);
   }
 
   public declareToolOutputs(contract: HyperionToolOutputContract): void {
@@ -228,70 +304,102 @@ export class HyperionAgentSession {
     callback: (context: HyperionAttemptContext) => T | Promise<T>,
     options: HyperionAttemptOptions = {},
   ): Promise<HyperionAttemptResult<T>> {
-    const checkpointId = await this.snapshot();
-    const context: HyperionAttemptContext = {
-      checkpointId,
-      workspace: this.workspace,
-      reconcile: () => this.reconcile(checkpointId),
-      exec: (command, args = [], execOptions = {}) =>
-        this.execute(command, args, execOptions, checkpointId),
-    };
+    if (this.activeAttemptCheckpointId !== undefined) {
+      throw new HyperionAttemptInProgressError(
+        this.activeAttemptCheckpointId === "pending" ? undefined : this.activeAttemptCheckpointId,
+      );
+    }
+
+    this.activeAttemptCheckpointId = "pending";
+    let checkpointId: CheckpointId | undefined;
 
     try {
-      const result = await callback(context);
-      const reconcileResult = options.reconcileOnSuccess === false
-        ? undefined
-        : await this.reconcile(checkpointId);
-      const attemptResult: HyperionAttemptResult<T> = {
+      const snapshotOptions: Omit<HyperionSnapshotOptions, "parentId"> = {};
+
+      if (options.branchId !== undefined) {
+        snapshotOptions.branchId = options.branchId;
+      }
+
+      if (options.subagentId !== undefined) {
+        snapshotOptions.subagentId = options.subagentId;
+      }
+
+      if (options.agentId !== undefined) {
+        snapshotOptions.agentId = options.agentId;
+      }
+
+      snapshotOptions.createdBy = "run-attempt";
+
+      checkpointId = options.parentCheckpointId === undefined
+        ? await this.snapshot(snapshotOptions)
+        : await this.fork(options.parentCheckpointId, snapshotOptions);
+      this.activeAttemptCheckpointId = checkpointId;
+      const context: HyperionAttemptContext = {
         checkpointId,
-        result,
-        rolledBack: false,
+        workspace: this.workspace,
+        reconcile: () => this.reconcile(checkpointId),
+        exec: (command, args = [], execOptions = {}) =>
+          this.execute(command, args, execOptions, checkpointId),
       };
 
-      if (reconcileResult) {
-        attemptResult.reconcileResult = reconcileResult;
-      }
-
-      return attemptResult;
-    } catch (attemptError) {
-      let reconcileResult: ReconcileResult | undefined;
-
       try {
-        reconcileResult = await this.reconcile(checkpointId);
-      } catch {
-        // rollback() performs mandatory reconciliation again; preserve the attempt error.
-      }
-
-      if (options.rollbackOnThrow === false) {
-        throw annotateAttemptError(attemptError, buildAttemptErrorContext({
+        const result = await callback(context);
+        const reconcileResult = options.reconcileOnSuccess === false
+          ? undefined
+          : await this.reconcile(checkpointId);
+        const attemptResult: HyperionAttemptResult<T> = {
           checkpointId,
-          reconcileResult,
+          result,
           rolledBack: false,
-        }));
-      }
-
-      try {
-        await this.rollback(checkpointId);
-      } catch (rollbackError) {
-        const rollbackFailureInput: ConstructorParameters<typeof HyperionAttemptRollbackError>[0] = {
-          checkpointId,
-          attemptError,
-          rollbackError,
         };
 
         if (reconcileResult) {
-          rollbackFailureInput.reconcileResult = reconcileResult;
+          attemptResult.reconcileResult = reconcileResult;
         }
 
-        throw new HyperionAttemptRollbackError(rollbackFailureInput);
-      }
+        return attemptResult;
+      } catch (attemptError) {
+        let reconcileResult: ReconcileResult | undefined;
 
-      throw annotateAttemptError(attemptError, buildAttemptErrorContext({
-        checkpointId,
-        reconcileResult,
-        rolledBack: true,
-        rollbackMs: this.lastRollbackMs,
-      }));
+        try {
+          reconcileResult = await this.reconcile(checkpointId);
+        } catch {
+          // rollback() performs mandatory reconciliation again; preserve the attempt error.
+        }
+
+        if (options.rollbackOnThrow === false) {
+          throw annotateAttemptError(attemptError, buildAttemptErrorContext({
+            checkpointId,
+            reconcileResult,
+            rolledBack: false,
+          }));
+        }
+
+        try {
+          await this.rollback(checkpointId);
+        } catch (rollbackError) {
+          const rollbackFailureInput: ConstructorParameters<typeof HyperionAttemptRollbackError>[0] = {
+            checkpointId,
+            attemptError,
+            rollbackError,
+          };
+
+          if (reconcileResult) {
+            rollbackFailureInput.reconcileResult = reconcileResult;
+          }
+
+          throw new HyperionAttemptRollbackError(rollbackFailureInput);
+        }
+
+        throw annotateAttemptError(attemptError, buildAttemptErrorContext({
+          checkpointId,
+          reconcileResult,
+          rolledBack: true,
+          rollbackMs: this.lastRollbackMs,
+        }));
+      }
+    } finally {
+      this.activeAttemptCheckpointId = undefined;
     }
   }
 

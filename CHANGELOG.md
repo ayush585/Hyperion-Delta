@@ -2,6 +2,29 @@
 
 All notable release changes for `hyperion-delta` are documented here.
 
+## 0.1.7 - 2026-06-19
+
+### Branch Merge Semantics (P1)
+
+- Added deterministic branch merge planning with a non-overlap fast path and stable apply ordering.
+- Added typed branch conflict reporting via `HyperionBranchConflictError` and `HYPERION_BRANCH_CONFLICT`.
+- Added reject-only conflict mode (`conflictMode: "reject"`) for conservative same-path overlap handling.
+- Added sibling-branch conflict guardrails for `promoteBranch()`, `dropBranch()`, and `rollback()`.
+
+### Branch Lifecycle And Lineage
+
+- Added `runInBranch()`, `promoteBranch()`, and `dropBranch()` to workspace and agent session APIs.
+- Expanded `fork()` to support optional parent inference while keeping existing parented behavior.
+- Expanded lineage metadata with `agentId` and `createdBy` across checkpoints, diagnostics, and durable recovery journals.
+- Added auditable lineage snapshots to checkpoint diagnostics.
+
+### Reliability, Tests, And Docs
+
+- Added branch contention stress coverage for parallel subagent promote/drop/rollback behavior under overlap pressure.
+- Expanded unit/integration coverage for branch conflicts, compatible overlap outcomes, and new API surfaces.
+- Extended reliability CI/nightly scripts and thresholds with branch contention controls.
+- Updated README and API docs for branch lifecycle, conflict types, metadata additions, and reliability guidance.
+
 ## 0.1.6 - 2026-06-18
 
 ### Runtime Reliability

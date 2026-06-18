@@ -59,6 +59,35 @@ interface HyperionPromoteOptions {
 Passed to `promote()`. When `exportPatch` is `true`, the promotion result
 includes a Git-compatible unified diff of the dirty set.
 
+### `HyperionSnapshotOptions`
+
+```ts
+interface HyperionSnapshotOptions {
+  parentId?: CheckpointId;
+  branchId?: string;
+  subagentId?: string;
+  agentId?: string;
+  createdBy?: HyperionCheckpointCreatedBy;
+}
+```
+
+Used by `snapshot(options?)`. All fields are optional.
+
+- `parentId` requires an active checkpoint.
+- `branchId`, `subagentId`, and `agentId` must be non-empty strings.
+
+### `HyperionCheckpointCreatedBy`
+
+```ts
+type HyperionCheckpointCreatedBy =
+  | "snapshot"
+  | "fork"
+  | "run-attempt"
+  | "run-in-branch"
+  | "rehydrate"
+  | "unknown";
+```
+
 ## Checkpoint types
 
 ### `CheckpointId`
@@ -68,6 +97,42 @@ type CheckpointId = string;
 ```
 
 A unique identifier for a checkpoint, returned by `snapshot()`.
+
+### `HyperionCheckpointSummary`
+
+```ts
+interface HyperionCheckpointSummary {
+  checkpointId: CheckpointId;
+  parentId?: CheckpointId;
+  branchId?: string;
+  subagentId?: string;
+  agentId?: string;
+  createdBy?: HyperionCheckpointCreatedBy;
+  status: "active" | "rolling-back" | "disposed" | "promoted";
+  createdAt: number;
+  source: "active" | "journal";
+}
+```
+
+Returned by lineage/head APIs:
+
+- `getCheckpointLineage(checkpointId)`
+- `listCheckpointChildren(parentId, options?)`
+- `listBranchHeads(filter?)`
+- `listSubagentHeads(filter?)`
+
+### `HyperionCheckpointHeadFilter`
+
+```ts
+interface HyperionCheckpointHeadFilter {
+  branchId?: string;
+  subagentId?: string;
+  agentId?: string;
+  includeInactive?: boolean;
+}
+```
+
+Optional filter for `listBranchHeads()` and `listSubagentHeads()`.
 
 ### `StorageStrategyKind`
 
@@ -117,6 +182,56 @@ interface HyperionPromotionResult {
 Returned by `promote()`. Includes the patch when `exportPatch` was
 requested, and whether storage was successfully cleaned.
 
+### `HyperionPromoteBranchOptions`
+
+```ts
+interface HyperionPromoteBranchOptions extends HyperionPromoteOptions {
+  targetCheckpointId?: CheckpointId;
+  conflictMode?: HyperionBranchConflictMode;
+}
+```
+
+### `HyperionBranchConflictMode`
+
+```ts
+type HyperionBranchConflictMode = "reject";
+```
+
+### `HyperionBranchPathConflict`
+
+```ts
+interface HyperionBranchPathConflict {
+  relativePath: string;
+  sourceCheckpointId: CheckpointId;
+  targetCheckpointId: CheckpointId;
+  sourceKind: DirtyEntry["kind"];
+  targetKind: DirtyEntry["kind"];
+  sourceAgentId?: string;
+  targetAgentId?: string;
+}
+```
+
+### `HyperionBranchMergeResult`
+
+```ts
+interface HyperionBranchMergeResult {
+  sourceCheckpointId: CheckpointId;
+  targetCheckpointId?: CheckpointId;
+  conflictMode: HyperionBranchConflictMode;
+  mergedAt: number;
+  appliedPaths: string[];
+  conflicts: HyperionBranchPathConflict[];
+}
+```
+
+### `HyperionBranchPromotionResult`
+
+```ts
+interface HyperionBranchPromotionResult extends HyperionPromotionResult {
+  merge: HyperionBranchMergeResult;
+}
+```
+
 ## Diagnostics
 
 ### `HyperionDiagnostics`
@@ -146,7 +261,14 @@ interface HyperionAgentSessionDiagnostics extends HyperionDiagnostics {
 ```ts
 interface HyperionCheckpointDiagnostics {
   checkpointId: CheckpointId;
+  parentId?: CheckpointId;
+  branchId?: string;
+  subagentId?: string;
+  agentId?: string;
+  createdBy?: HyperionCheckpointCreatedBy;
+  createdAt?: number;
   status: "active" | "rolling-back" | "disposed" | "promoted";
+  lineage?: HyperionCheckpointSummary[];
   storage?: HyperionStorageDiagnostics;
 }
 ```
@@ -226,6 +348,11 @@ type HyperionToolOutputPath =
 ```ts
 interface RecoverableAttempt {
   checkpointId: CheckpointId;
+  parentId?: CheckpointId;
+  branchId?: string;
+  subagentId?: string;
+  agentId?: string;
+  createdBy?: HyperionCheckpointCreatedBy;
   sessionId: string;
   createdAt: number;
   updatedAt: number;
@@ -261,6 +388,28 @@ interface HyperionAttemptContext {
 
 Passed to `runAttempt()` callbacks.
 
+### `HyperionBranchContext`
+
+```ts
+interface HyperionBranchContext {
+  checkpointId: CheckpointId;
+  workspace: HyperionWorkspace;
+  reconcile(): Promise<ReconcileResult>;
+}
+```
+
+Passed to `runInBranch()` callbacks.
+
+### `HyperionBranchRunResult<T>`
+
+```ts
+interface HyperionBranchRunResult<T> {
+  checkpointId: CheckpointId;
+  result: T;
+  reconcileResult: ReconcileResult;
+}
+```
+
 ### `HyperionAttemptResult<T>`
 
 ```ts
@@ -279,6 +428,10 @@ interface HyperionAttemptResult<T> {
 interface HyperionAttemptOptions {
   rollbackOnThrow?: boolean;
   reconcileOnSuccess?: boolean;
+  parentCheckpointId?: CheckpointId;
+  branchId?: string;
+  subagentId?: string;
+  agentId?: string;
 }
 ```
 
@@ -313,6 +466,7 @@ interface HyperionExecResult {
 ```
 Error
 ├── HyperionError
+│   ├── HyperionBranchConflictError
 │   ├── HyperionCapacityError
 │   ├── HyperionIntegrityError
 │   ├── HyperionPathError
@@ -320,6 +474,8 @@ Error
 │   └── HyperionRollbackError
 ├── HyperionExecError
 │   (thrown by HyperionAgentSession.exec())
+├── HyperionAttemptInProgressError
+│   (thrown by HyperionAgentSession.runAttempt())
 └── HyperionAttemptRollbackError
     (thrown by HyperionAgentSession.runAttempt())
 ```
@@ -338,6 +494,7 @@ Base error class. All Hyperion errors have a `code` property from
 ```ts
 type HyperionErrorCode =
   | "HYPERION_CAPACITY"
+  | "HYPERION_BRANCH_CONFLICT"
   | "HYPERION_INTEGRITY"
   | "HYPERION_IGNORED_PATH"
   | "HYPERION_PATH"
@@ -349,6 +506,11 @@ type HyperionErrorCode =
 
 Thrown by `snapshot()` when `maxConcurrentCheckpoints` is exceeded and
 disposed checkpoints cannot be collected.
+
+### `HyperionBranchConflictError extends HyperionError`
+
+Thrown by `promoteBranch()` and `dropBranch()` when active branch dirty
+sets overlap and `conflictMode` is reject-only.
 
 ### `HyperionIntegrityError extends HyperionError`
 
@@ -394,6 +556,13 @@ Thrown by `runAttempt()` when the callback throws a primitive value (for
 example a string or number) instead of an `Error`. The original value is
 available on `.value`.
 
+### `HyperionAttemptInProgressError extends Error`
+
+Thrown by `runAttempt()` when another `runAttempt()` is already active in
+the same `HyperionAgentSession`. Exposes
+`code = "HYPERION_ATTEMPT_IN_PROGRESS"` and may include
+`activeCheckpointId`.
+
 ### `HyperionAttemptRollbackError extends Error`
 
 Thrown by `HyperionAgentSession.runAttempt()` on double-fault: the
@@ -407,6 +576,7 @@ type HyperionAgentSessionErrorCode =
   | "HYPERION_EXEC"
   | "HYPERION_EXEC_OPTIONS"
   | "HYPERION_EXEC_TIMEOUT"
+  | "HYPERION_ATTEMPT_IN_PROGRESS"
   | "HYPERION_ATTEMPT_CONTEXT"
   | "HYPERION_ATTEMPT_ROLLBACK";
 ```

@@ -70,6 +70,9 @@ runAttempt<T>(
 The autopilot attempt runner. Snapshots the workspace, executes the
 callback, reconciles on success, and rolls back on failure.
 
+If another `runAttempt()` is already active in the same session, this
+throws `HyperionAttemptInProgressError` immediately.
+
 ```ts
 const attempt = await session.runAttempt(async ({ exec }) => {
   await exec("npm", ["test"]);
@@ -103,8 +106,17 @@ interface HyperionAttemptContext {
 interface HyperionAttemptOptions {
   rollbackOnThrow?: boolean;   // default: true
   reconcileOnSuccess?: boolean; // default: true
+  parentCheckpointId?: CheckpointId;
+  branchId?: string;
+  subagentId?: string;
+  agentId?: string;
 }
 ```
+
+When `parentCheckpointId` is set, `runAttempt()` uses workspace
+`fork(parentCheckpointId, ...)` semantics: it requires an active parent,
+inherits lineage tags by default, and applies any explicit `branchId` or
+`subagentId`/`agentId` overrides.
 
 **Result:**
 
@@ -175,13 +187,89 @@ Throws `HyperionExecError` when `rejectOnNonZero` is true and
 `exitCode !== 0`. Throws `HyperionExecTimeoutError` when `timeoutMs` is
 exceeded. Throws `HyperionExecOptionsError` when `timeoutMs` is invalid.
 
-### `snapshot()`
+### `snapshot(options?)`
 
 ```ts
-snapshot(): Promise<CheckpointId>
+snapshot(options?: HyperionSnapshotOptions): Promise<CheckpointId>
 ```
 
 Delegates to `workspace.snapshot()`.
+
+### `fork(parentCheckpointId, options?)`
+
+```ts
+fork(
+  parentCheckpointId?: CheckpointId,
+  options?: Omit<HyperionSnapshotOptions, "parentId">
+): Promise<CheckpointId>
+```
+
+Delegates to `workspace.fork()`.
+
+### `runInBranch(branchCheckpointId, callback)`
+
+```ts
+runInBranch<T>(
+  branchCheckpointId: CheckpointId,
+  callback: (context: HyperionBranchContext) => T | Promise<T>
+): Promise<HyperionBranchRunResult<T>>
+```
+
+Delegates to `workspace.runInBranch()`.
+
+### `promoteBranch(branchCheckpointId, options?)`
+
+```ts
+promoteBranch(
+  branchCheckpointId: CheckpointId,
+  options?: HyperionPromoteBranchOptions
+): Promise<HyperionBranchPromotionResult>
+```
+
+Delegates to `workspace.promoteBranch()`.
+
+### `dropBranch(branchCheckpointId)`
+
+```ts
+dropBranch(branchCheckpointId: CheckpointId): Promise<void>
+```
+
+Delegates to `workspace.dropBranch()`.
+
+### `getCheckpointLineage(checkpointId)`
+
+```ts
+getCheckpointLineage(checkpointId: CheckpointId): HyperionCheckpointSummary[]
+```
+
+Delegates to `workspace.getCheckpointLineage()`.
+
+### `listCheckpointChildren(parentId, options?)`
+
+```ts
+listCheckpointChildren(
+  parentId: CheckpointId,
+  options?: { includeInactive?: boolean }
+): HyperionCheckpointSummary[]
+```
+
+Delegates to `workspace.listCheckpointChildren()`.
+
+### `listBranchHeads(filter?)`
+
+```ts
+listBranchHeads(filter?: HyperionCheckpointHeadFilter): HyperionCheckpointSummary[]
+```
+
+Delegates to `workspace.listBranchHeads()`.
+
+### `listSubagentHeads(filter?)`
+
+```ts
+listSubagentHeads(filter?: HyperionCheckpointHeadFilter): HyperionCheckpointSummary[]
+```
+
+Delegates to `workspace.listSubagentHeads()`.
 
 ### `reconcile(checkpointId?)`
 
@@ -294,6 +382,11 @@ class HyperionAttemptRollbackError extends Error {
 Thrown by `runAttempt()` when the callback throws **and** rollback also
 fails. Represents a double-fault — both the attempt and the recovery
 failed.
+
+### `HyperionBranchConflictError`
+
+Thrown by `promoteBranch()` and `dropBranch()` when overlapping active
+sibling branch dirty paths are rejected by merge conflict policy.
 
 ## See also
 

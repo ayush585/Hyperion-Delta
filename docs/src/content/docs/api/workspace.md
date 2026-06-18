@@ -65,10 +65,10 @@ Whether the VFS interceptor is currently patching Node's `fs` module.
 
 ## Methods
 
-### `snapshot()`
+### `snapshot(options?)`
 
 ```ts
-snapshot(): Promise<CheckpointId>
+snapshot(options?: HyperionSnapshotOptions): Promise<CheckpointId>
 ```
 
 Creates a checkpoint of the current workspace state. Captures file
@@ -77,11 +77,148 @@ capacity GC before allocating a new checkpoint namespace.
 
 ```ts
 const checkpointId = await workspace.snapshot();
+
+const childId = await workspace.snapshot({
+  parentId: checkpointId,
+  branchId: "feature/login",
+  subagentId: "planner",
+  agentId: "agent-planner",
+  createdBy: "run-attempt",
+});
 ```
+
+`HyperionSnapshotOptions` supports optional lineage tags:
+
+- `parentId`: requires an active checkpoint in this workspace.
+- `branchId`: non-empty string (trimmed).
+- `subagentId`: non-empty string (trimmed).
+- `agentId`: non-empty string (trimmed).
+- `createdBy`: one of `snapshot`, `fork`, `run-attempt`, `run-in-branch`, `rehydrate`, `unknown`.
 
 Throws `HyperionCapacityError` if `maxConcurrentCheckpoints` is exceeded
 and disposed checkpoints cannot be freed. Throws `HyperionError` if the
 workspace has been disposed.
+
+### `fork(parentCheckpointId, options?)`
+
+```ts
+fork(
+  parentCheckpointId?: CheckpointId,
+  options?: Omit<HyperionSnapshotOptions, "parentId">
+): Promise<CheckpointId>
+```
+
+Creates a child checkpoint from an active parent checkpoint.
+
+- `parentId` is always set to `parentCheckpointId`.
+- If `parentCheckpointId` is omitted, Hyperion uses the most recent active
+  checkpoint as parent; if none exists, `fork()` behaves like `snapshot()`
+  with `createdBy: "fork"`.
+- `branchId` defaults to parent `branchId` or parent checkpoint ID.
+- `subagentId` and `agentId` default to parent values.
+- Any provided `options.branchId`, `options.subagentId`, or
+  `options.agentId` overrides parent defaults.
+
+```ts
+const parentId = await workspace.snapshot({
+  branchId: "feature/login",
+  subagentId: "planner",
+});
+
+const childId = await workspace.fork(parentId);
+const reviewerId = await workspace.fork(parentId, { subagentId: "reviewer" });
+```
+
+### `getCheckpointLineage(checkpointId)`
+
+```ts
+getCheckpointLineage(checkpointId: CheckpointId): HyperionCheckpointSummary[]
+```
+
+Returns checkpoint ancestry from oldest to newest, including the target
+checkpoint itself.
+
+```ts
+const lineage = workspace.getCheckpointLineage(checkpointId);
+// [{ checkpointId, parentId?, branchId?, subagentId?, status, createdAt, source }]
+```
+
+### `listCheckpointChildren(parentId, options?)`
+
+```ts
+listCheckpointChildren(
+  parentId: CheckpointId,
+  options?: { includeInactive?: boolean }
+): HyperionCheckpointSummary[]
+```
+
+Lists direct child checkpoints of `parentId` sorted by `createdAt`.
+By default it returns only active and rolling-back checkpoints; pass
+`includeInactive: true` to include disposed and promoted checkpoints.
+
+### `listBranchHeads(filter?)`
+
+```ts
+listBranchHeads(filter?: HyperionCheckpointHeadFilter): HyperionCheckpointSummary[]
+```
+
+Returns latest checkpoint heads grouped by `branchId`, with optional
+filters for `branchId`, `subagentId`, `agentId`, and `includeInactive`.
+
+### `listSubagentHeads(filter?)`
+
+```ts
+listSubagentHeads(filter?: HyperionCheckpointHeadFilter): HyperionCheckpointSummary[]
+```
+
+Returns latest checkpoint heads grouped by `subagentId`, with optional
+filters for `branchId`, `subagentId`, `agentId`, and `includeInactive`.
+
+### `runInBranch(branchCheckpointId, callback)`
+
+```ts
+runInBranch<T>(
+  branchCheckpointId: CheckpointId,
+  callback: (context: HyperionBranchContext) => T | Promise<T>
+): Promise<HyperionBranchRunResult<T>>
+```
+
+Runs branch-scoped callback logic against an existing checkpoint and
+reconciles that branch before returning.
+
+```ts
+const runResult = await workspace.runInBranch(branchCheckpointId, async ({ reconcile }) => {
+  // mutate files
+  return "ok";
+});
+
+console.log(runResult.reconcileResult.created);
+```
+
+### `promoteBranch(branchCheckpointId, options?)`
+
+```ts
+promoteBranch(
+  branchCheckpointId: CheckpointId,
+  options?: HyperionPromoteBranchOptions
+): Promise<HyperionBranchPromotionResult>
+```
+
+Promotes a branch checkpoint with deterministic merge planning.
+
+- Fast-path applies when dirty sets do not overlap.
+- Current conflict mode is reject-only (`conflictMode: "reject"`).
+- Overlapping paths throw `HyperionBranchConflictError`.
+
+### `dropBranch(branchCheckpointId)`
+
+```ts
+dropBranch(branchCheckpointId: CheckpointId): Promise<void>
+```
+
+Drops a branch checkpoint using rollback semantics without broad
+reconciliation. Overlapping active sibling dirty paths are rejected with
+`HyperionBranchConflictError`.
 
 ### `reconcile(checkpointId?)`
 

@@ -46,6 +46,18 @@ const checks = [
     defaultActual: 6,
     defaultMinimum: 1,
   },
+  {
+    actualName: "HYPERION_BRANCH_STRESS_CYCLES",
+    minimumName: "HYPERION_BRANCH_STRESS_MIN_CYCLES",
+    defaultActual: 20,
+    defaultMinimum: 1,
+  },
+  {
+    actualName: "HYPERION_BRANCH_SUBAGENTS",
+    minimumName: "HYPERION_BRANCH_STRESS_MIN_SUBAGENTS",
+    defaultActual: 4,
+    defaultMinimum: 2,
+  },
 ];
 
 for (const check of checks) {
