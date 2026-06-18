@@ -1,0 +1,154 @@
+name: Reliability
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  unit-matrix:
+    name: Unit matrix (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Run unit suite
+        run: npm test
+
+  failure-injection:
+    name: Failure injection suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build tests
+        run: npm run build:test
+
+      - name: Run failure-injection tests
+        run: >-
+          node --test
+          .test-dist/test/error-boundary.test.js
+          .test-dist/test/workspace-failure-injection.test.js
+          .test-dist/test/rollback-engine-failure-injection.test.js
+
+  fuzz-smoke:
+    name: Reliability fuzz smoke
+    runs-on: ubuntu-latest
+    env:
+      HYPERION_FUZZ_SEEDS: "20"
+      HYPERION_FUZZ_OPS: "120"
+      HYPERION_RECONCILE_FUZZ_SEEDS: "20"
+      HYPERION_RECONCILE_FUZZ_ENTRIES: "120"
+      HYPERION_FUZZ_MIN_SEEDS: "20"
+      HYPERION_FUZZ_MIN_OPS: "120"
+      HYPERION_RECONCILE_FUZZ_MIN_SEEDS: "20"
+      HYPERION_RECONCILE_FUZZ_MIN_ENTRIES: "120"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build tests
+        run: npm run build:test
+
+      - name: Check fuzz thresholds
+        run: node scripts/check-reliability-thresholds.mjs
+
+      - name: Run fuzz smoke suite
+        run: node scripts/run-reliability-fuzz.mjs
+
+  stress-smoke:
+    name: Reliability stress smoke
+    runs-on: ubuntu-latest
+    env:
+      HYPERION_STRESS_CYCLES: "200"
+      HYPERION_STRESS_CONCURRENCY: "6"
+      HYPERION_STRESS_MIN_CYCLES: "200"
+      HYPERION_STRESS_MIN_CONCURRENCY: "6"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build tests
+        run: npm run build:test
+
+      - name: Check stress thresholds
+        run: node scripts/check-reliability-thresholds.mjs
+
+      - name: Run stress smoke suite
+        run: node scripts/run-reliability-stress.mjs
+
+  repeatability-gate:
+    name: Repeatability gate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+    env:
+      HYPERION_REPEATABILITY_ITERATIONS: "3"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build tests
+        run: npm run build:test
+
+      - name: Run repeatability gate
+        run: node scripts/run-repeatability-gate.mjs

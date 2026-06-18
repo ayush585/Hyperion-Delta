@@ -207,20 +207,22 @@ export class HyperionWorkspace {
 
   public async snapshot(): Promise<CheckpointId> {
     this.assertNotDisposed("snapshot()");
-    this.runCapacityGarbageCollection();
-    this.checkpointStore.ensureCapacityAvailable();
-    this.ensureSessionRoot();
-    const deviceInfo = this.probeSessionDeviceInfo();
-    this.refreshStrategySelection(deviceInfo);
 
-    const baseline = this.withDeclaredToolOutputStats(this.stateEngine.captureManifest());
-    const checkpoint = this.checkpointStore.createCheckpoint({
-      baseline,
-      deviceId: deviceInfo.workspaceDeviceId,
-    });
+    let checkpoint: StoredCheckpoint | undefined;
     let storage: StorageStrategy | undefined;
 
     try {
+      this.runCapacityGarbageCollection();
+      this.checkpointStore.ensureCapacityAvailable();
+      this.ensureSessionRoot();
+      const deviceInfo = this.probeSessionDeviceInfo();
+      this.refreshStrategySelection(deviceInfo);
+      const baseline = this.withDeclaredToolOutputStats(this.stateEngine.captureManifest());
+      checkpoint = this.checkpointStore.createCheckpoint({
+        baseline,
+        deviceId: deviceInfo.workspaceDeviceId,
+      });
+
       storage = createCheckpointStorage({
         workspaceRoot: this.root,
         selectedKind: this.strategySelection.kind,
@@ -243,10 +245,13 @@ export class HyperionWorkspace {
         // Snapshot rollback cleanup is best-effort.
       }
 
-      this.checkpointStorage.delete(checkpoint.id);
-      this.checkpointToolOutputDeclarations.delete(checkpoint.id);
-      this.checkpointStore.deleteCheckpoint(checkpoint.id);
-      throw error;
+      if (checkpoint) {
+        this.checkpointStorage.delete(checkpoint.id);
+        this.checkpointToolOutputDeclarations.delete(checkpoint.id);
+        this.checkpointStore.deleteCheckpoint(checkpoint.id);
+      }
+
+      throw this.normalizeOperationalError("snapshot()", error);
     }
   }
 
@@ -261,22 +266,26 @@ export class HyperionWorkspace {
     });
 
     try {
-      this.writeAttemptJournalBestEffort(checkpoint);
-      await this.rollbackEngine.rollback({
-        checkpoint,
-        storage,
-        ghostDirectoryCleaner,
-        reconcile: async () => {
-          await this.reconcile(checkpointId);
-        },
-      });
-      this.writeAttemptJournalBestEffort(checkpoint);
-    } catch (error) {
-      this.writeAttemptJournalBestEffort(checkpoint);
-      throw error;
-    }
+      try {
+        this.writeAttemptJournalBestEffort(checkpoint);
+        await this.rollbackEngine.rollback({
+          checkpoint,
+          storage,
+          ghostDirectoryCleaner,
+          reconcile: async () => {
+            await this.reconcile(checkpointId);
+          },
+        });
+        this.writeAttemptJournalBestEffort(checkpoint);
+      } catch (error) {
+        this.writeAttemptJournalBestEffort(checkpoint);
+        throw error;
+      }
 
-    this.cleanupCheckpointStorage(checkpointId);
+      this.cleanupCheckpointStorage(checkpointId);
+    } catch (error) {
+      throw this.normalizeOperationalError("rollback()", error);
+    }
   }
 
   public async reconcile(checkpointId?: CheckpointId): Promise<ReconcileResult> {
@@ -293,13 +302,17 @@ export class HyperionWorkspace {
       };
     }
 
-    const currentManifest = this.withDeclaredToolOutputStats(
-      this.stateEngine.captureManifest(),
-      checkpoint,
-    );
-    const result = this.reconciliationEngine.reconcile({ checkpoint, currentManifest });
-    this.writeAttemptJournalBestEffort(checkpoint);
-    return result;
+    try {
+      const currentManifest = this.withDeclaredToolOutputStats(
+        this.stateEngine.captureManifest(),
+        checkpoint,
+      );
+      const result = this.reconciliationEngine.reconcile({ checkpoint, currentManifest });
+      this.writeAttemptJournalBestEffort(checkpoint);
+      return result;
+    } catch (error) {
+      throw this.normalizeOperationalError("reconcile()", error);
+    }
   }
 
   public async dispose(): Promise<void> {
@@ -319,13 +332,17 @@ export class HyperionWorkspace {
     const checkpoint = this.requireActiveCheckpoint(checkpointId);
     const storage = this.requireCheckpointStorage(checkpointId);
 
-    await this.reconcile(checkpointId);
+    try {
+      await this.reconcile(checkpointId);
 
-    return this.patchExportEngine.exportPatch({
-      workspaceRoot: this.root,
-      checkpoint,
-      storage,
-    });
+      return this.patchExportEngine.exportPatch({
+        workspaceRoot: this.root,
+        checkpoint,
+        storage,
+      });
+    } catch (error) {
+      throw this.normalizeOperationalError("exportPatch()", error);
+    }
   }
 
   public async promote(
@@ -343,32 +360,36 @@ export class HyperionWorkspace {
     checkpoint.lock.locked = true;
 
     try {
-      const reconcileResult = await this.reconcile(checkpointId);
-      const patch = options.exportPatch
-        ? this.patchExportEngine.exportPatch({
-            workspaceRoot: this.root,
-            checkpoint,
-            storage,
-          })
-        : undefined;
-      const promotedAt = Date.now();
+      try {
+        const reconcileResult = await this.reconcile(checkpointId);
+        const patch = options.exportPatch
+          ? this.patchExportEngine.exportPatch({
+              workspaceRoot: this.root,
+              checkpoint,
+              storage,
+            })
+          : undefined;
+        const promotedAt = Date.now();
 
-      checkpoint.status = "promoted";
-      this.writeAttemptJournalBestEffort(checkpoint);
+        checkpoint.status = "promoted";
+        this.writeAttemptJournalBestEffort(checkpoint);
 
-      const result: HyperionPromotionResult = {
-        checkpointId,
-        promotedAt,
-        dirtyCount: checkpoint.dirty.size,
-        reconcileResult,
-        storageCleaned: this.cleanupCheckpointStorageBestEffortWithResult(checkpointId),
-      };
+        const result: HyperionPromotionResult = {
+          checkpointId,
+          promotedAt,
+          dirtyCount: checkpoint.dirty.size,
+          reconcileResult,
+          storageCleaned: this.cleanupCheckpointStorageBestEffortWithResult(checkpointId),
+        };
 
-      if (patch !== undefined) {
-        result.patch = patch;
+        if (patch !== undefined) {
+          result.patch = patch;
+        }
+
+        return result;
+      } catch (error) {
+        throw this.normalizeOperationalError("promote()", error);
       }
-
-      return result;
     } finally {
       checkpoint.lock.locked = false;
     }
@@ -377,62 +398,70 @@ export class HyperionWorkspace {
   public async rehydrateAttempt(checkpointId: CheckpointId): Promise<CheckpointId> {
     this.assertNotDisposed("rehydrateAttempt()");
 
-    if (this.checkpointStore.getCheckpoint(checkpointId)) {
+    try {
+      if (this.checkpointStore.getCheckpoint(checkpointId)) {
+        return checkpointId;
+      }
+
+      const journal = this.attemptJournalStore.read(checkpointId);
+
+      if (!journal) {
+        throw new HyperionRollbackError(`Unknown recoverable checkpoint: ${checkpointId}`);
+      }
+
+      if (resolve(journal.workspaceRoot) !== this.root) {
+        throw new HyperionPathError(`Recoverable checkpoint belongs to another workspace: ${checkpointId}`);
+      }
+
+      if (journal.status === "disposed") {
+        throw new HyperionRollbackError(`Recoverable checkpoint is disposed: ${checkpointId}`);
+      }
+
+      if (journal.status === "promoted") {
+        throw new HyperionRollbackError(`Recoverable checkpoint is promoted: ${checkpointId}`);
+      }
+
+      const backups = this.attemptJournalStore.readBackups(checkpointId);
+      this.assertRehydratable(journal, backups);
+      this.runCapacityGarbageCollection();
+      this.checkpointStore.ensureCapacityAvailable();
+
+      const checkpoint = this.checkpointStore.restoreCheckpoint({
+        id: checkpointId,
+        baseline: stateManifestFromJournal(journal),
+        dirty: dirtyMapFromJournal(journal),
+        storageNamespace: join(this.config.sessionRoot, checkpointId),
+        status: journal.status === "rolling-back" ? "active" : journal.status,
+        createdAt: journal.createdAt,
+      });
+      const storage = createCheckpointStorage({
+        workspaceRoot: this.root,
+        selectedKind: journal.strategy,
+        checkpointNamespace: checkpoint.storageNamespace,
+        checkpointId: checkpoint.id,
+        sessionId: journal.sessionId,
+        useHotBuffer: false,
+        hotBufferMaxFileBytes: this.config.hotBufferMaxFileBytes,
+        hotBufferMaxTotalBytes: this.config.hotBufferMaxTotalBytes,
+        hotBufferMaxFiles: this.config.hotBufferMaxFiles,
+      });
+
+      storage.hydrateBackupRecords?.(backups?.records ?? []);
+      this.checkpointStorage.set(checkpointId, storage);
+
       return checkpointId;
+    } catch (error) {
+      throw this.normalizeOperationalError("rehydrateAttempt()", error);
     }
-
-    const journal = this.attemptJournalStore.read(checkpointId);
-
-    if (!journal) {
-      throw new HyperionRollbackError(`Unknown recoverable checkpoint: ${checkpointId}`);
-    }
-
-    if (resolve(journal.workspaceRoot) !== this.root) {
-      throw new HyperionPathError(`Recoverable checkpoint belongs to another workspace: ${checkpointId}`);
-    }
-
-    if (journal.status === "disposed") {
-      throw new HyperionRollbackError(`Recoverable checkpoint is disposed: ${checkpointId}`);
-    }
-
-    if (journal.status === "promoted") {
-      throw new HyperionRollbackError(`Recoverable checkpoint is promoted: ${checkpointId}`);
-    }
-
-    const backups = this.attemptJournalStore.readBackups(checkpointId);
-    this.assertRehydratable(journal, backups);
-    this.runCapacityGarbageCollection();
-    this.checkpointStore.ensureCapacityAvailable();
-
-    const checkpoint = this.checkpointStore.restoreCheckpoint({
-      id: checkpointId,
-      baseline: stateManifestFromJournal(journal),
-      dirty: dirtyMapFromJournal(journal),
-      storageNamespace: join(this.config.sessionRoot, checkpointId),
-      status: journal.status === "rolling-back" ? "active" : journal.status,
-      createdAt: journal.createdAt,
-    });
-    const storage = createCheckpointStorage({
-      workspaceRoot: this.root,
-      selectedKind: journal.strategy,
-      checkpointNamespace: checkpoint.storageNamespace,
-      checkpointId: checkpoint.id,
-      sessionId: journal.sessionId,
-      useHotBuffer: false,
-      hotBufferMaxFileBytes: this.config.hotBufferMaxFileBytes,
-      hotBufferMaxTotalBytes: this.config.hotBufferMaxTotalBytes,
-      hotBufferMaxFiles: this.config.hotBufferMaxFiles,
-    });
-
-    storage.hydrateBackupRecords?.(backups?.records ?? []);
-    this.checkpointStorage.set(checkpointId, storage);
-
-    return checkpointId;
   }
 
   public installFsInterceptor(): void {
     if (this.disposed) {
-      throw new HyperionError("Cannot install fs interceptor after dispose()");
+      throw new HyperionError(
+        "Cannot install fs interceptor after dispose()",
+        "HYPERION_NOT_IMPLEMENTED",
+        { reason: "WORKSPACE_DISPOSED" },
+      );
     }
 
     this.vfsInterceptor.install();
@@ -836,8 +865,23 @@ export class HyperionWorkspace {
 
   private assertNotDisposed(operation: string): void {
     if (this.disposed) {
-      throw new HyperionError(`Cannot call ${operation} after dispose()`);
+      throw new HyperionError(
+        `Cannot call ${operation} after dispose()`,
+        "HYPERION_NOT_IMPLEMENTED",
+        { reason: "WORKSPACE_DISPOSED" },
+      );
     }
+  }
+
+  private normalizeOperationalError(operation: string, error: unknown): HyperionError {
+    if (error instanceof HyperionError) {
+      return error;
+    }
+
+    return new HyperionRollbackError(
+      `${operation} failed: ${formatUnknownError(error)}`,
+      { reason: "OPERATION_FAILED", cause: error },
+    );
   }
 
   private requireKnownCheckpoint(checkpointId: CheckpointId) {
@@ -1123,4 +1167,20 @@ function backupRecordFileType(
   }
 
   return undefined;
+}
+
+function formatUnknownError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
 }

@@ -378,13 +378,38 @@ Thrown by `HyperionAgentSession.exec()` when `rejectOnNonZero` is `true`
 (default) and the child process exits with a non-zero code. Includes the
 full `HyperionExecResult`.
 
-When `timeoutMs` is exceeded, `exec()` rejects with a standard `Error`.
+### `HyperionExecTimeoutError extends Error`
+
+Thrown by `HyperionAgentSession.exec()` when `timeoutMs` is exceeded.
+Includes the `command`, `timeoutMs`, and `code = "HYPERION_EXEC_TIMEOUT"`.
+
+### `HyperionExecOptionsError extends Error`
+
+Thrown by `HyperionAgentSession.exec()` when option validation fails, such
+as non-finite or negative `timeoutMs` values.
+
+### `HyperionAttemptContextError extends Error`
+
+Thrown by `runAttempt()` when the callback throws a primitive value (for
+example a string or number) instead of an `Error`. The original value is
+available on `.value`.
 
 ### `HyperionAttemptRollbackError extends Error`
 
 Thrown by `HyperionAgentSession.runAttempt()` on double-fault: the
 callback threw and the subsequent rollback also failed. Exposes both the
 attempt error and the rollback error for inspection.
+
+### `HyperionAgentSessionErrorCode`
+
+```ts
+type HyperionAgentSessionErrorCode =
+  | "HYPERION_EXEC"
+  | "HYPERION_EXEC_OPTIONS"
+  | "HYPERION_EXEC_TIMEOUT"
+  | "HYPERION_ATTEMPT_CONTEXT"
+  | "HYPERION_ATTEMPT_ROLLBACK";
+```
 
 ## Default constants
 

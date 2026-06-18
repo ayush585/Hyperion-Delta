@@ -17,15 +17,16 @@
 ## API Reference
 
 - [HyperionWorkspace](https://ayush585.github.io/Hyperion-Delta/api/workspace/): Low-level API: snapshot(), reconcile(), rollback(), promote(), dispose(), track(), declareToolOutputs(), getDiagnostics(), recoverAttempts(), rehydrateAttempt(), exportPatch(), installFsInterceptor(), uninstallFsInterceptor(). Constructor accepts string path or full HyperionConfig.
-- [Agent Session](https://ayush585.github.io/Hyperion-Delta/api/agent-session/): High-level wrapper with autopilot runAttempt(callback, options). exec() helper runs explicit executable + args array with shell:false. Context exec() reconciles after child-process completion. Session-specific errors: HyperionExecError, HyperionAttemptRollbackError.
+- [Agent Session](https://ayush585.github.io/Hyperion-Delta/api/agent-session/): High-level wrapper with autopilot runAttempt(callback, options). exec() helper runs explicit executable + args array with shell:false. Context exec() reconciles after child-process completion. Session-specific errors include HyperionExecError, HyperionExecTimeoutError, HyperionExecOptionsError, HyperionAttemptContextError, and HyperionAttemptRollbackError.
 - [Types and Errors](https://ayush585.github.io/Hyperion-Delta/api/types/): Complete type reference: HyperionConfig (14 fields with defaults), StorageStrategyKind, ReconcileResult, CheckpointId. Error hierarchy: HyperionError → HyperionCapacityError, HyperionIntegrityError, HyperionPathError → HyperionIgnoredPathError, HyperionRollbackError. Tool contracts, diagnostics, recovery types.
 
 ## Guides
 
 - [Limitations](https://ayush585.github.io/Hyperion-Delta/guides/limitations/): Four known limitations with decided mitigations. No permanent history/merging (Git companion bridges this). Platform disparity (Hot Dirty Buffer + Windows link discovery). Ignored files blindspot (strict mode + tool contracts). Agent lifecycle complexity (autopilot runner).
+- [Reliability](https://ayush585.github.io/Hyperion-Delta/guides/reliability/): Reliability SLOs and CI gates. Targets: zero silent corruption, zero rollback invariant violations, <0.1% flake rate, and required linux/windows/macos matrix. Covers failure injection, seeded fuzz, stress smoke, and nightly soak commands.
 - [Security](https://ayush585.github.io/Hyperion-Delta/guides/security/): Zero runtime dependencies. No arbitrary shell execution. exec() uses spawn with shell:false. Fixed internal probes only (git, rsync, fsutil). Path normalization before I/O. Mandatory reconcile before rollback. Missing backups fail loudly.
 - [Troubleshooting](https://ayush585.github.io/Hyperion-Delta/guides/troubleshooting/): 14 common issues. Git unavailable (stat-only fallback), tmpfs unavailable (pure manifest degrade), Windows NTFS (hard-link discovery), strict ignored writes (declareToolOutputs), durable journal recovery (recoverAttempts, canRehydrate), rehydration failures (volatile memory-only blockers), patch export (text files only), missing backup records (integrity error).
-- [Release and Publishing](https://ayush585.github.io/Hyperion-Delta/guides/release/): Local pre-publish gate (npm run release:final), GitHub Actions CI with npm provenance via NPM_TOKEN secret in npm-publish environment. Tag, push, create GitHub Release — CI runs checks and publishes.
+- [Release and Publishing](https://ayush585.github.io/Hyperion-Delta/guides/release/): Local pre-publish gate (`npm run release:final`), GitHub Actions trusted publishing with npm provenance via OIDC (`id-token: write`), tag-based publish flow (`refs/tags/vX.Y.Z`), and manual dispatch fallback from `main`.
 
 ## Benchmark Evidence
 

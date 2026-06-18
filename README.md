@@ -154,6 +154,19 @@ npm run release:final
 
 This runs the full release check, verifies the zero-runtime-dependency audit path with `npm audit --omit=dev`, and prints the final dry-run package contents.
 
+For reliability gates (failure injection, fuzz smoke, and stress smoke):
+
+```sh
+npm run test:reliability:ci
+```
+
+For targeted local reliability runs:
+
+```sh
+npm run test:reliability:fuzz
+npm run test:reliability:stress
+```
+
 For a focused install smoke after an existing build:
 
 ```sh
@@ -162,7 +175,9 @@ npm run package:smoke
 
 The published package is intentionally limited to `dist`, the README/architecture docs, the benchmark hero image used by the README, and required npm metadata. Benchmark commands are repository-checkout utilities and are not part of the SDK runtime surface.
 
-Publishing is prepared through GitHub Actions trusted publishing with npm provenance. Before the first public publish, a maintainer must configure npm trusted publishing for `hyperion-delta` with repository `ayush585/Hyperion-Delta`, workflow `.github/workflows/publish.yml`, and environment `npm-publish`. This repo does not store npm tokens.
+Publishing uses GitHub Actions trusted publishing with npm provenance (OIDC). Before the first public publish, a maintainer must configure npm trusted publishing for `hyperion-delta` with repository `ayush585/Hyperion-Delta`, workflow `.github/workflows/publish.yml`, and environment `npm-publish`.
+
+Manual dispatch is tag-only. Trigger `Publish Package` from `main` and provide `tag` as `refs/tags/vX.Y.Z`.
 
 ## Troubleshooting
 

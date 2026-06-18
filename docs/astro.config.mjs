@@ -44,6 +44,7 @@ export default defineConfig({
           label: "Guides",
           items: [
             { label: "Limitations", link: "/guides/limitations/" },
+            { label: "Reliability", link: "/guides/reliability/" },
             { label: "Security", link: "/guides/security/" },
             { label: "Troubleshooting", link: "/guides/troubleshooting/" },
             { label: "Release", link: "/guides/release/" },

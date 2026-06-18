@@ -7,10 +7,14 @@ export {
 } from "./constants.js";
 export {
   HyperionAgentSession,
+  HyperionAttemptContextError,
   HyperionAttemptRollbackError,
   HyperionExecError,
+  HyperionExecOptionsError,
+  HyperionExecTimeoutError,
 } from "./agent-session.js";
 export type {
+  HyperionAgentSessionErrorCode,
   HyperionAgentSessionDiagnostics,
   HyperionAttemptContext,
   HyperionAttemptOptions,

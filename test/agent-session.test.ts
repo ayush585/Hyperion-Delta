@@ -14,7 +14,10 @@ import { afterEach, describe, it } from "node:test";
 
 import {
   HyperionAgentSession,
+  HyperionAttemptContextError,
   HyperionExecError,
+  HyperionExecOptionsError,
+  HyperionExecTimeoutError,
   type HyperionAgentSessionDiagnostics,
   type HyperionAttemptContext,
   type HyperionAttemptOptions,
@@ -327,6 +330,7 @@ describe("HyperionAgentSession", () => {
         }),
       (error) => {
         assert.equal(error instanceof HyperionExecError, true);
+        assert.equal((error as HyperionExecError).code, "HYPERION_EXEC");
         assert.equal((error as HyperionExecError).result.exitCode, 7);
         assert.equal((error as { rolledBack?: boolean }).rolledBack, true);
         return true;
@@ -371,10 +375,31 @@ describe("HyperionAgentSession", () => {
 
     await assert.rejects(
       () => session.exec(process.execPath, ["-e", "setInterval(() => {}, 1000);"], { timeoutMs: 200 }),
-      /Command timed out after 200ms/,
+      (error) => {
+        assert.equal(error instanceof HyperionExecTimeoutError, true);
+        assert.equal((error as HyperionExecTimeoutError).code, "HYPERION_EXEC_TIMEOUT");
+        assert.equal((error as HyperionExecTimeoutError).timeoutMs, 200);
+        assert.match((error as Error).message, /Command timed out after 200ms/);
+        return true;
+      },
     );
 
     assert.ok(Date.now() - startedAt < 5_000);
+  });
+
+  it("validates timeoutMs options with a typed error", async () => {
+    const root = createTempWorkspace();
+    const session = createSession(root);
+
+    await assert.rejects(
+      () => session.exec(process.execPath, ["--version"], { timeoutMs: Number.NaN }),
+      (error) => {
+        assert.equal(error instanceof HyperionExecOptionsError, true);
+        assert.equal((error as HyperionExecOptionsError).code, "HYPERION_EXEC_OPTIONS");
+        assert.match((error as Error).message, /timeoutMs must be a non-negative finite number/);
+        return true;
+      },
+    );
   });
 
   it("rolls back attempt changes when context exec times out", async () => {
@@ -389,6 +414,7 @@ describe("HyperionAgentSession", () => {
           await exec(process.execPath, ["-e", "setInterval(() => {}, 1000);"], { timeoutMs: 200 });
         }),
       (error) => {
+        assert.equal(error instanceof HyperionExecTimeoutError, true);
         assert.match(String((error as Error).message), /Command timed out/);
         assert.equal((error as { rolledBack?: boolean }).rolledBack, true);
         return true;
@@ -396,6 +422,26 @@ describe("HyperionAgentSession", () => {
     );
 
     assert.equal(existsSync(path.join(root, "created-before-timeout.txt")), false);
+  });
+
+  it("wraps primitive attempt failures in a typed context error", async () => {
+    const root = createTempWorkspace();
+    const session = createSession(root);
+
+    await assert.rejects(
+      () =>
+        session.runAttempt(() => {
+          throw "primitive-failure";
+        }),
+      (error) => {
+        assert.equal(error instanceof HyperionAttemptContextError, true);
+        assert.equal((error as HyperionAttemptContextError).code, "HYPERION_ATTEMPT_CONTEXT");
+        assert.equal((error as HyperionAttemptContextError).value, "primitive-failure");
+        assert.equal((error as { rolledBack?: boolean }).rolledBack, true);
+        assert.equal(typeof (error as { checkpointId?: string }).checkpointId, "string");
+        return true;
+      },
+    );
   });
 
   it("disposes idempotently and uninstalls the workspace interceptor", async () => {

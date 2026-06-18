@@ -31,6 +31,17 @@ export interface HyperionExecOptions {
   timeoutMs?: number;
 }
 
+export type HyperionAgentSessionErrorCode =
+  | "HYPERION_EXEC"
+  | "HYPERION_EXEC_OPTIONS"
+  | "HYPERION_EXEC_TIMEOUT"
+  | "HYPERION_ATTEMPT_CONTEXT"
+  | "HYPERION_ATTEMPT_ROLLBACK";
+
+interface HyperionAgentSessionErrorContext {
+  cause?: unknown;
+}
+
 const DEFAULT_EXEC_TIMEOUT_MS = 5 * 60 * 1000;
 
 export interface HyperionAttemptContext {
@@ -59,16 +70,64 @@ export interface HyperionAgentSessionDiagnostics extends HyperionDiagnostics {
 }
 
 export class HyperionExecError extends Error {
+  public readonly code: HyperionAgentSessionErrorCode = "HYPERION_EXEC";
   public readonly result: HyperionExecResult;
 
-  public constructor(result: HyperionExecResult) {
-    super(`Command failed with exit code ${result.exitCode}: ${result.command}`);
+  public constructor(result: HyperionExecResult, context: HyperionAgentSessionErrorContext = {}) {
+    super(
+      `Command failed with exit code ${result.exitCode}: ${result.command}`,
+      context.cause === undefined ? undefined : { cause: context.cause },
+    );
     this.name = "HyperionExecError";
     this.result = result;
   }
 }
 
+export class HyperionExecTimeoutError extends Error {
+  public readonly code: HyperionAgentSessionErrorCode = "HYPERION_EXEC_TIMEOUT";
+  public readonly command: string;
+  public readonly timeoutMs: number;
+
+  public constructor(
+    command: string,
+    timeoutMs: number,
+    context: HyperionAgentSessionErrorContext = {},
+  ) {
+    super(
+      `Command timed out after ${timeoutMs}ms: ${command}`,
+      context.cause === undefined ? undefined : { cause: context.cause },
+    );
+    this.name = "HyperionExecTimeoutError";
+    this.command = command;
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+export class HyperionExecOptionsError extends Error {
+  public readonly code: HyperionAgentSessionErrorCode = "HYPERION_EXEC_OPTIONS";
+
+  public constructor(message: string, context: HyperionAgentSessionErrorContext = {}) {
+    super(message, context.cause === undefined ? undefined : { cause: context.cause });
+    this.name = "HyperionExecOptionsError";
+  }
+}
+
+export class HyperionAttemptContextError extends Error {
+  public readonly code: HyperionAgentSessionErrorCode = "HYPERION_ATTEMPT_CONTEXT";
+  public readonly value: unknown;
+
+  public constructor(value: unknown, context: HyperionAgentSessionErrorContext = {}) {
+    super(
+      `runAttempt() callback threw a non-Error value: ${String(value)}`,
+      context.cause === undefined ? undefined : { cause: context.cause },
+    );
+    this.name = "HyperionAttemptContextError";
+    this.value = value;
+  }
+}
+
 export class HyperionAttemptRollbackError extends Error {
+  public readonly code: HyperionAgentSessionErrorCode = "HYPERION_ATTEMPT_ROLLBACK";
   public readonly checkpointId: CheckpointId;
   public readonly attemptError: unknown;
   public readonly rollbackError: unknown;
@@ -364,7 +423,7 @@ export class HyperionAgentSession {
 
           terminateChildProcess(child);
 
-          settle(() => reject(new Error(`Command timed out after ${timeoutMs}ms: ${command}`)));
+          settle(() => reject(new HyperionExecTimeoutError(command, timeoutMs)));
         }, timeoutMs);
         timeoutHandle.unref?.();
       }
@@ -378,7 +437,9 @@ function resolveExecTimeoutMs(timeoutMs: number | undefined): number | undefined
   }
 
   if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
-    throw new Error(`timeoutMs must be a non-negative finite number: ${timeoutMs}`);
+    throw new HyperionExecOptionsError(
+      `timeoutMs must be a non-negative finite number: ${timeoutMs}`,
+    );
   }
 
   if (timeoutMs === 0) {
@@ -412,7 +473,7 @@ function annotateAttemptError(
     return error;
   }
 
-  return Object.assign(new Error(String(error)), context);
+  return Object.assign(new HyperionAttemptContextError(error), context);
 }
 
 function buildAttemptErrorContext(input: {

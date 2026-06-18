@@ -71,15 +71,44 @@ describe("release safety", () => {
     assert.match(docsGitignore, /^\*\.tgz$/m);
   });
 
-  it("keeps trusted publishing explicit and token-free", () => {
+  it("keeps reliability workflows cross-platform with nightly soak coverage", () => {
+    const reliabilityWorkflow = readFileSync(
+      path.join(repoRoot, ".github/workflows/reliability.yml"),
+      "utf8",
+    );
+    const nightlyWorkflow = readFileSync(
+      path.join(repoRoot, ".github/workflows/nightly-soak.yml"),
+      "utf8",
+    );
+
+    assert.match(reliabilityWorkflow, /name:\s*Reliability/);
+    assert.match(reliabilityWorkflow, /ubuntu-latest/);
+    assert.match(reliabilityWorkflow, /windows-latest/);
+    assert.match(reliabilityWorkflow, /macos-latest/);
+    assert.match(reliabilityWorkflow, /failure-injection/);
+    assert.match(reliabilityWorkflow, /fuzz-smoke/);
+    assert.match(reliabilityWorkflow, /stress-smoke/);
+    assert.match(reliabilityWorkflow, /repeatability-gate/);
+    assert.match(nightlyWorkflow, /name:\s*Nightly Soak/);
+    assert.match(nightlyWorkflow, /schedule:/);
+    assert.match(nightlyWorkflow, /cron:\s*"0 2 \* \* \*"/);
+    assert.match(nightlyWorkflow, /nightly-soak-linux/);
+    assert.match(nightlyWorkflow, /nightly-soak-windows/);
+    assert.match(nightlyWorkflow, /nightly-soak-macos/);
+  });
+
+  it("keeps trusted publishing explicit, tag-scoped, and token-free", () => {
     const workflow = readFileSync(path.join(repoRoot, ".github/workflows/publish.yml"), "utf8");
 
     assert.match(workflow, /release:/);
     assert.match(workflow, /workflow_dispatch:/);
-    assert.match(workflow, /default:\s*"refs\/heads\/main"/);
+    assert.match(workflow, /description:\s*"Tag ref to publish \(refs\/tags\/vX\.Y\.Z\)"/);
+    assert.match(workflow, /required:\s*true/);
     assert.match(workflow, /name:\s*Guard manual publish branch/);
     assert.match(workflow, /if:\s*github\.event_name == 'workflow_dispatch'/);
     assert.match(workflow, /Manual publish workflow_dispatch is allowed only from refs\/heads\/main/);
+    assert.match(workflow, /Manual publish requires a semantic version tag ref like refs\/tags\/vX\.Y\.Z/);
+    assert.match(workflow, /ref:\s*\$\{\{ github\.event_name == 'workflow_dispatch' && github\.event\.inputs\.tag \|\| github\.ref \}\}/);
     assert.match(workflow, /id-token:\s*write/);
     assert.match(workflow, /contents:\s*read/);
     assert.match(workflow, /environment:\s*npm-publish/);
@@ -87,6 +116,8 @@ describe("release safety", () => {
     assert.match(workflow, /run: npm ci/);
     assert.match(workflow, /run: npm run release:final/);
     assert.match(workflow, /run: npm publish --provenance/);
+    assert.doesNotMatch(workflow, /NODE_AUTH_TOKEN/);
+    assert.doesNotMatch(workflow, /NPM_TOKEN/);
     assert.doesNotMatch(workflow, /\bnpm_[A-Za-z0-9]{32,}\b/);
   });
 

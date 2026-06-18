@@ -7,7 +7,10 @@ import {
   DEFAULT_HOT_BUFFER_MAX_TOTAL_BYTES,
   DEFAULT_IGNORED_PATTERNS,
   HyperionAgentSession,
+  HyperionAttemptContextError,
   HyperionExecError,
+  HyperionExecOptionsError,
+  HyperionExecTimeoutError,
   HyperionError,
   HyperionIgnoredPathError,
   HyperionWorkspace,
@@ -15,6 +18,7 @@ import {
   type CheckpointId,
   type DirtyEntry,
   type HyperionAgentSessionDiagnostics,
+  type HyperionAgentSessionErrorCode,
   type HyperionAttemptOptions,
   type HyperionAttemptResult,
   type HyperionCheckpointDiagnostics,
@@ -43,6 +47,9 @@ describe("package exports", () => {
     assert.equal(typeof HyperionAgentSession, "function");
     assert.equal(typeof HyperionError, "function");
     assert.equal(typeof HyperionExecError, "function");
+    assert.equal(typeof HyperionExecTimeoutError, "function");
+    assert.equal(typeof HyperionExecOptionsError, "function");
+    assert.equal(typeof HyperionAttemptContextError, "function");
     assert.equal(typeof HyperionIgnoredPathError, "function");
     assert.equal(typeof DEFAULT_HOT_BUFFER_MAX_FILE_BYTES, "number");
     assert.equal(typeof DEFAULT_HOT_BUFFER_MAX_TOTAL_BYTES, "number");
@@ -139,6 +146,7 @@ describe("package exports", () => {
       lastReconcileResult: reconcileResult,
       lastRollbackMs: 1,
     };
+    const sessionErrorCode: HyperionAgentSessionErrorCode = "HYPERION_EXEC_TIMEOUT";
     const attemptOptions: HyperionAttemptOptions = { rollbackOnThrow: true };
     const promoteOptions: HyperionPromoteOptions = { exportPatch: true };
     const toolOutputPath: HyperionToolOutputPath = {
@@ -195,6 +203,7 @@ describe("package exports", () => {
     assert.equal(workspaceDiagnostics.windowsVolume?.hardLinkCapable, true);
     assert.equal(ignoredWriteEvent.action, "declared");
     assert.equal(diagnostics.lastReconcileResult?.checkpointId, checkpointId);
+    assert.equal(sessionErrorCode, "HYPERION_EXEC_TIMEOUT");
     assert.equal(attemptOptions.rollbackOnThrow, true);
     assert.equal(promoteOptions.exportPatch, true);
     assert.equal(toolOutputContract.outputs.length, 2);

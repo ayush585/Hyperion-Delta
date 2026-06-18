@@ -50,6 +50,11 @@
     "package:smoke": "node scripts/package-install-smoke.mjs",
     "release:check": "npm run typecheck && npm test && npm run build && npm pack --dry-run && npm run package:smoke",
     "release:final": "npm run release:check && npm audit --omit=dev && npm pack --dry-run",
+    "test:reliability:ci": "npm run build:test && node scripts/check-reliability-thresholds.mjs && node scripts/run-reliability-fuzz.mjs && node scripts/run-reliability-stress.mjs",
+    "test:reliability:fuzz": "npm run build:test && node scripts/run-reliability-fuzz.mjs",
+    "test:reliability:nightly": "npm run build:test && node scripts/run-nightly-soak.mjs",
+    "test:reliability:repeatability": "npm run build:test && node scripts/run-repeatability-gate.mjs",
+    "test:reliability:stress": "npm run build:test && node scripts/run-reliability-stress.mjs",
     "typecheck": "tsc -p tsconfig.test.json --noEmit",
     "test": "npm run build:test && node --test .test-dist/test",
     "test:watch": "node --test --watch .test-dist/test"

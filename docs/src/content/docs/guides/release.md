@@ -12,11 +12,12 @@ Before pushing a release:
 1. Start from a clean working tree on `main`
 2. Install from the lockfile: `npm ci`
 3. Run the full release check: `npm run release:final`
-4. Review `npm pack --dry-run` — confirm only `dist`, `README.md`,
-   `ARCHITECTURE.md`, `LIMITATIONS.md`, `CHANGELOG.md`, `LICENSE`,
-   the benchmark hero image, and npm metadata
-5. Confirm the package install smoke imports both `HyperionWorkspace` and
-   `HyperionAgentSession` from the packed tarball
+4. Run reliability gates: `npm run test:reliability:ci`
+5. Review `npm pack --dry-run` — confirm only `dist`, `README.md`,
+    `ARCHITECTURE.md`, `LIMITATIONS.md`, `CHANGELOG.md`, `LICENSE`,
+    the benchmark hero image, and npm metadata
+6. Confirm the package install smoke imports both `HyperionWorkspace` and
+    `HyperionAgentSession` from the packed tarball
 
 ```sh
 npm run release:final
@@ -37,21 +38,22 @@ Publishing is handled by GitHub Actions with npm provenance:
    ```
 3. Create a GitHub Release for the new version tag
 4. CI runs `npm run release:final` and publishes with
-   `npm publish --provenance`
+    `npm publish --provenance`
+
+Manual dispatch is available as a fallback: run `Publish Package` from
+`main` and provide `tag` as `refs/tags/vX.Y.Z`.
 
 The package is published with a signed provenance statement. The
 workflow lives at `.github/workflows/publish.yml`.
 
 ## Trusted publishing
 
-The CI workflow authenticates via an npm granular access token stored as
-the `NPM_TOKEN` secret in the `npm-publish` GitHub environment. The token
-must have read/write package access and bypass-2FA enabled.
+The CI workflow uses npm trusted publishing with GitHub OIDC (`id-token:
+write`). No npm token is required when trusted publishing is configured for:
 
-To rotate the token:
-1. Generate a new granular access token on
-   [npm](https://www.npmjs.com/settings/ayush585/tokens)
-2. Update the `NPM_TOKEN` secret in the `npm-publish` environment
+- Repository: `ayush585/Hyperion-Delta`
+- Workflow: `.github/workflows/publish.yml`
+- Environment: `npm-publish`
 
 ## Current release target
 

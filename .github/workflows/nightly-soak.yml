@@ -1,0 +1,115 @@
+name: Nightly Soak
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  nightly-soak-linux:
+    name: Nightly soak (linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      HYPERION_FUZZ_SEEDS: "400"
+      HYPERION_FUZZ_OPS: "400"
+      HYPERION_RECONCILE_FUZZ_SEEDS: "400"
+      HYPERION_RECONCILE_FUZZ_ENTRIES: "400"
+      HYPERION_STRESS_CYCLES: "2500"
+      HYPERION_STRESS_CONCURRENCY: "10"
+      HYPERION_FUZZ_MIN_SEEDS: "400"
+      HYPERION_FUZZ_MIN_OPS: "400"
+      HYPERION_RECONCILE_FUZZ_MIN_SEEDS: "400"
+      HYPERION_RECONCILE_FUZZ_MIN_ENTRIES: "400"
+      HYPERION_STRESS_MIN_CYCLES: "2500"
+      HYPERION_STRESS_MIN_CONCURRENCY: "10"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build tests
+        run: npm run build:test
+
+      - name: Run nightly soak
+        run: node scripts/run-nightly-soak.mjs
+
+  nightly-soak-windows:
+    name: Nightly soak (windows)
+    runs-on: windows-latest
+    timeout-minutes: 240
+    env:
+      HYPERION_FUZZ_SEEDS: "200"
+      HYPERION_FUZZ_OPS: "300"
+      HYPERION_RECONCILE_FUZZ_SEEDS: "200"
+      HYPERION_RECONCILE_FUZZ_ENTRIES: "300"
+      HYPERION_STRESS_CYCLES: "1200"
+      HYPERION_STRESS_CONCURRENCY: "8"
+      HYPERION_FUZZ_MIN_SEEDS: "200"
+      HYPERION_FUZZ_MIN_OPS: "300"
+      HYPERION_RECONCILE_FUZZ_MIN_SEEDS: "200"
+      HYPERION_RECONCILE_FUZZ_MIN_ENTRIES: "300"
+      HYPERION_STRESS_MIN_CYCLES: "1200"
+      HYPERION_STRESS_MIN_CONCURRENCY: "8"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build tests
+        run: npm run build:test
+
+      - name: Run nightly soak
+        run: node scripts/run-nightly-soak.mjs
+
+  nightly-soak-macos:
+    name: Nightly soak (macos)
+    runs-on: macos-latest
+    timeout-minutes: 240
+    env:
+      HYPERION_FUZZ_SEEDS: "200"
+      HYPERION_FUZZ_OPS: "300"
+      HYPERION_RECONCILE_FUZZ_SEEDS: "200"
+      HYPERION_RECONCILE_FUZZ_ENTRIES: "300"
+      HYPERION_STRESS_CYCLES: "1200"
+      HYPERION_STRESS_CONCURRENCY: "8"
+      HYPERION_FUZZ_MIN_SEEDS: "200"
+      HYPERION_FUZZ_MIN_OPS: "300"
+      HYPERION_RECONCILE_FUZZ_MIN_SEEDS: "200"
+      HYPERION_RECONCILE_FUZZ_MIN_ENTRIES: "300"
+      HYPERION_STRESS_MIN_CYCLES: "1200"
+      HYPERION_STRESS_MIN_CONCURRENCY: "8"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build tests
+        run: npm run build:test
+
+      - name: Run nightly soak
+        run: node scripts/run-nightly-soak.mjs

@@ -172,7 +172,8 @@ interface HyperionExecResult {
 ```
 
 Throws `HyperionExecError` when `rejectOnNonZero` is true and
-`exitCode !== 0`. Throws `Error` when `timeoutMs` is exceeded.
+`exitCode !== 0`. Throws `HyperionExecTimeoutError` when `timeoutMs` is
+exceeded. Throws `HyperionExecOptionsError` when `timeoutMs` is invalid.
 
 ### `snapshot()`
 
