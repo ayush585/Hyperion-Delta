@@ -2,6 +2,32 @@
 
 All notable release changes for `hyperion-delta` are documented here.
 
+## 0.1.6 - 2026-06-18
+
+### Runtime Reliability
+
+- Fixed startup environment probing to detect same-device link safety even when the session root does not exist yet (uses nearest existing ancestor).
+- Fixed checkpoint recency selection to use `createdAt` ordering after rehydrate flows.
+- Fixed snapshot transactional safety so failed storage setup rolls back orphaned checkpoint records and capacity counters.
+- Fixed path normalization hardening to reject null-byte paths.
+- Fixed reconciliation rename reporting to populate conservative one-to-one `renamed` pairs without double-counting create/delete entries.
+- Fixed child-process execution hangs by adding configurable `timeoutMs` with safe defaults and explicit opt-out.
+
+### VFS, Recovery, And Tooling
+
+- Expanded Node VFS interception coverage for missing callback/promise mutation APIs and fd-based write paths.
+- Fixed ignored-write event typing to use exported `VfsMutationKind` and aligned public type surfaces.
+- Removed dead private workspace methods and rewired internal test helpers to current checkpoint store/storage internals.
+- Fixed sweep runner JSON parsing by replacing greedy brace extraction with balanced-object scanning and shape validation.
+- Hardened Windows benchmark setup cleanup with fail-fast retries and contextual error reporting.
+
+### CI, Docs, And Release Safety
+
+- Fixed publish workflow manual-dispatch safety with main-branch defaults and guard enforcement.
+- Fixed docs deploy workflow node cache configuration and added docs-local ignore rules for logs and packed tarballs.
+- Fixed docs/API consistency issues (`DEFAULT_MAX_CONCURRENT_CHECKPOINTS`, `memoryHits`, Hero base URL handling, VFS API coverage, and timeout/type updates).
+- Added/updated regression coverage across environment discovery, session GC, release safety, state TOCTOU handling, reconciliation, agent session timeout behavior, and VFS interception paths.
+
 ## 0.1.5 - 2026-06-17
 
 ### Benchmark Sweep Framework

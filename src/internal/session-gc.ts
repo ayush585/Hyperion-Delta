@@ -15,7 +15,7 @@ import path from "node:path";
 import { isPathInsideRoot, toPosixPath } from "./path.js";
 
 export const STALE_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
-const SDK_PACKAGE_VERSION = "0.1.0";
+const SDK_PACKAGE_VERSION = "0.1.6";
 const SESSION_PREFIX = "session-";
 const LOCK_FILE_NAME = "lock.json";
 
