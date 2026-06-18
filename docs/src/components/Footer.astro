@@ -2,8 +2,6 @@
 import EditLink from "virtual:starlight/components/EditLink";
 import LastUpdated from "virtual:starlight/components/LastUpdated";
 import Pagination from "virtual:starlight/components/Pagination";
-import config from "virtual:starlight/user-config";
-import { Icon } from "@astrojs/starlight/components";
 ---
 
 <footer class="sl-flex">
@@ -26,13 +24,6 @@ import { Icon } from "@astrojs/starlight/components";
     </a>
   </div>
 
-  {
-    config.credits && (
-      <a class="kudos sl-flex" href="https://starlight.astro.build">
-        <Icon name="starlight" /> {Astro.locals.t("builtWithStarlight.label")}
-      </a>
-    )
-  }
 </footer>
 
 <style>
@@ -111,23 +102,6 @@ import { Icon } from "@astrojs/starlight/components";
   .signature-link:hover {
     color: var(--sl-color-text-accent);
     text-shadow: 0 0 20px rgba(168, 144, 255, 0.55);
-  }
-
-  .kudos {
-    align-items: center;
-    gap: 0.5em;
-    margin: 1.5rem auto;
-    font-size: var(--sl-text-xs);
-    text-decoration: none;
-    color: var(--sl-color-gray-3);
-  }
-
-  .kudos :global(svg) {
-    color: var(--sl-color-orange);
-  }
-
-  .kudos:hover {
-    color: var(--sl-color-white);
   }
 
   :root[data-theme="light"] .signature-wrap {
