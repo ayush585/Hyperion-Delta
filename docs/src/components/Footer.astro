@@ -1,0 +1,216 @@
+---
+import EditLink from "virtual:starlight/components/EditLink";
+import LastUpdated from "virtual:starlight/components/LastUpdated";
+import Pagination from "virtual:starlight/components/Pagination";
+import config from "virtual:starlight/user-config";
+import { Icon } from "@astrojs/starlight/components";
+---
+
+<footer class="sl-flex">
+  <div class="meta sl-flex">
+    <EditLink {...Astro.props} />
+    <LastUpdated {...Astro.props} />
+  </div>
+
+  <Pagination {...Astro.props} />
+
+  <div class="signature-wrap" role="note" aria-label="Site signature">
+    <p class="signature-label">Made by</p>
+    <a
+      class="signature-link"
+      href="https://www.linkedin.com/in/ayushman-mukherjee-437a49314/"
+      target="_blank"
+      rel="noopener noreferrer"
+    >
+      Ayushman Mukherjee
+    </a>
+  </div>
+
+  {
+    config.credits && (
+      <a class="kudos sl-flex" href="https://starlight.astro.build">
+        <Icon name="starlight" /> {Astro.locals.t("builtWithStarlight.label")}
+      </a>
+    )
+  }
+</footer>
+
+<style>
+  footer {
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+
+  .meta {
+    gap: 0.75rem 3rem;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    margin-top: 3rem;
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-3);
+  }
+
+  .meta > :global(p:only-child) {
+    margin-inline-start: auto;
+  }
+
+  .signature-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    position: relative;
+    overflow: hidden;
+    margin-top: 0.35rem;
+    padding: 0.9rem 1.2rem;
+    border-radius: 999px;
+    background:
+      linear-gradient(120deg, rgba(108, 71, 255, 0.2), rgba(124, 82, 255, 0.08)),
+      radial-gradient(circle at 18% 15%, rgba(196, 176, 255, 0.2), transparent 52%);
+    border: 1px solid rgba(124, 82, 255, 0.35);
+    box-shadow:
+      0 10px 34px rgba(35, 20, 86, 0.28),
+      inset 0 1px 0 rgba(255, 255, 255, 0.16);
+    animation: signaturePulse 5.2s ease-in-out infinite;
+  }
+
+  .signature-wrap::before {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    background: linear-gradient(
+      110deg,
+      transparent 0%,
+      rgba(196, 176, 255, 0.15) 45%,
+      rgba(196, 176, 255, 0.3) 50%,
+      rgba(196, 176, 255, 0.15) 55%,
+      transparent 100%
+    );
+    transform: translateX(-115%);
+    animation: signatureSheen 8.8s ease-in-out infinite;
+    pointer-events: none;
+  }
+
+  .signature-label {
+    margin: 0;
+    font-size: 0.88rem;
+    color: var(--sl-color-gray-2);
+  }
+
+  .signature-link {
+    text-decoration: none;
+    font-size: 0.95rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--sl-color-white);
+    text-shadow: 0 0 14px rgba(168, 144, 255, 0.3);
+    transition: color 150ms ease, text-shadow 150ms ease;
+  }
+
+  .signature-link:hover {
+    color: var(--sl-color-text-accent);
+    text-shadow: 0 0 20px rgba(168, 144, 255, 0.55);
+  }
+
+  .kudos {
+    align-items: center;
+    gap: 0.5em;
+    margin: 1.5rem auto;
+    font-size: var(--sl-text-xs);
+    text-decoration: none;
+    color: var(--sl-color-gray-3);
+  }
+
+  .kudos :global(svg) {
+    color: var(--sl-color-orange);
+  }
+
+  .kudos:hover {
+    color: var(--sl-color-white);
+  }
+
+  :root[data-theme="light"] .signature-wrap {
+    background:
+      linear-gradient(120deg, rgba(90, 56, 224, 0.13), rgba(139, 112, 255, 0.06)),
+      radial-gradient(circle at 16% 10%, rgba(90, 56, 224, 0.12), transparent 45%);
+    border: 1px solid rgba(90, 56, 224, 0.23);
+    box-shadow:
+      0 10px 25px rgba(90, 56, 224, 0.14),
+      inset 0 1px 0 rgba(255, 255, 255, 0.75);
+  }
+
+  :root[data-theme="light"] .signature-wrap::before {
+    background: linear-gradient(
+      110deg,
+      transparent 0%,
+      rgba(90, 56, 224, 0.08) 45%,
+      rgba(90, 56, 224, 0.16) 50%,
+      rgba(90, 56, 224, 0.08) 55%,
+      transparent 100%
+    );
+  }
+
+  :root[data-theme="light"] .signature-label {
+    color: #4f4477;
+  }
+
+  :root[data-theme="light"] .signature-link {
+    color: #2f1f83;
+    text-shadow: none;
+  }
+
+  :root[data-theme="light"] .signature-link:hover {
+    color: #5a38e0;
+    text-shadow: none;
+  }
+
+  @media (max-width: 50rem) {
+    .signature-wrap {
+      flex-wrap: wrap;
+      padding: 0.85rem 1rem;
+      text-align: center;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .signature-wrap,
+    .signature-wrap::before {
+      animation: none;
+    }
+  }
+
+  @keyframes signaturePulse {
+    0%,
+    100% {
+      box-shadow:
+        0 10px 34px rgba(35, 20, 86, 0.28),
+        inset 0 1px 0 rgba(255, 255, 255, 0.16);
+    }
+
+    50% {
+      box-shadow:
+        0 12px 40px rgba(57, 33, 132, 0.36),
+        inset 0 1px 0 rgba(255, 255, 255, 0.22);
+    }
+  }
+
+  @keyframes signatureSheen {
+    0%,
+    70%,
+    100% {
+      transform: translateX(-115%);
+      opacity: 0;
+    }
+
+    15%,
+    45% {
+      opacity: 1;
+    }
+
+    55% {
+      transform: translateX(115%);
+      opacity: 0;
+    }
+  }
+</style>

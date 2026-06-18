@@ -33,3 +33,7 @@
 - [Results](https://ayush585.github.io/Hyperion-Delta/benchmark/results/): Original WSL2 audit (55,000x tmpfs, 3,580x manifest). Sweep data: dirty-set scaling (1→100 files: 4→299ms, 153x→2.9x vs Git), repo-size independence (1K→5K: manifest flat at 15ms, Git 3.3x growth to 1,887ms), agent-search stress (5-10 MCTS branches: 45-147ms per cycle).
 - [Windows Performance](https://ayush585.github.io/Hyperion-Delta/benchmark/windows/): NTFS-only benchmark. 10,000-file repo, 10 dirty files, 62ms average rollback — 9.2x faster than Git. No tmpfs, no Linux, no Git on the hot path. Pure Node.js filesystem operations.
 - [Reproduce](https://ayush585.github.io/Hyperion-Delta/benchmark/reproduce/): How to run benchmarks locally. Smoke test (npm run benchmark:smoke), full audit (npm run benchmark), environment overrides (HYPERION_FILE_COUNT, HYPERION_ITERATIONS), WSL2 staging notes, sweep runner usage (node scripts/sweep-runner.mjs config.json).
+
+## Credits
+
+- Made by [Ayushman Mukherjee](https://www.linkedin.com/in/ayushman-mukherjee-437a49314/).

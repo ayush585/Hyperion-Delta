@@ -10,6 +10,9 @@ export default defineConfig({
       title: "Hyperion Delta",
       description:
         "Zero-config local agent state management for dirty-set-scale rollback.",
+      components: {
+        Footer: "./src/components/Footer.astro",
+      },
       social: {
         github: "https://github.com/ayush585/Hyperion-Delta",
       },
