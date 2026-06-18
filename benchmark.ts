@@ -670,32 +670,38 @@ function main(): void {
     printRunnerComplete(search);
     printResults([search]);
   } else {
+    let legacyRunner: RunnerStats | undefined;
+
     if (!SKIP_LEGACY) {
       const gitInitNs = initializeGitRepository();
       status(`Git baseline complete in ${formatMs(gitInitNs)}`);
 
       status("\nPhase 2: Running Legacy Runner control group...");
-      const legacy = runLegacyRunner();
-      printRunnerComplete(legacy);
+      legacyRunner = runLegacyRunner();
+      printRunnerComplete(legacyRunner);
     }
 
-  status("\nPhase 3: Running optimized targeted reversion runners...");
-  const manifest = runManifestTargetedRunner();
-  printRunnerComplete(manifest);
+    status("\nPhase 3: Running optimized targeted reversion runners...");
+    const manifest = runManifestTargetedRunner();
+    printRunnerComplete(manifest);
 
-  const rsync = runRsyncTargetedRunner();
-  printRunnerComplete(rsync);
+    const rsync = runRsyncTargetedRunner();
+    printRunnerComplete(rsync);
 
-  const tmpfs = runTmpfsTargetedRunner();
-  printRunnerComplete(tmpfs);
+    const tmpfs = runTmpfsTargetedRunner();
+    printRunnerComplete(tmpfs);
 
-  const runners: RunnerStats[] = SKIP_LEGACY ? [manifest, rsync, tmpfs] : [runLegacyRunner() ? null as any : null as any, manifest, rsync, tmpfs];
+    const runners: RunnerStats[] = legacyRunner
+      ? [legacyRunner, manifest, rsync, tmpfs]
+      : [manifest, rsync, tmpfs];
 
-  if (!OUTPUT_JSON) {
-    console.log("\nMetadata lesson: full directory clone/delete was intentionally removed from Phase 3.");
-    console.log("The optimized runners only touch files the simulated agent changed.");
+    printResults(runners);
+
+    if (!OUTPUT_JSON) {
+      console.log("\nMetadata lesson: full directory clone/delete was intentionally removed from Phase 3.");
+      console.log("The optimized runners only touch files the simulated agent changed.");
+    }
   }
-}
 }
 
 try {
