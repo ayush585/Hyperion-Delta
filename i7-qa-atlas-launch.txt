@@ -1,0 +1,8 @@
+Synthetic Loreflow acceptance fixture.
+
+The Atlas launch was moved to September 12 because the vendor
+security review requires an additional week.
+
+The onboarding scope remains unchanged.
+
+This pull request contains synthetic QA data only.
