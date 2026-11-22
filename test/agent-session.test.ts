@@ -16,7 +16,9 @@ import {
   HyperionAgentSession,
   HyperionAttemptContextError,
   HyperionAttemptInProgressError,
+  HyperionAttemptRollbackError,
   HyperionExecError,
+  HyperionIntegrityError,
   HyperionExecOptionsError,
   HyperionExecTimeoutError,
   type HyperionAgentSessionDiagnostics,
@@ -448,6 +450,40 @@ describe("HyperionAgentSession", () => {
     );
 
     assert.equal(existsSync(path.join(root, "created.txt")), false);
+  });
+
+  it("reports a failed rollback without deleting created files when a backup is missing", async () => {
+    const root = createTempWorkspace();
+    const fs = getCommonJsFs();
+    const sourcePath = path.join(root, "source.txt");
+    const createdPath = path.join(root, "created.txt");
+    writeFileSync(sourcePath, "original");
+    const session = createSession(root);
+    const attemptError = new Error("tests failed");
+
+    await assert.rejects(
+      () =>
+        session.runAttempt(async ({ exec }) => {
+          fs.writeFileSync(createdPath, "created");
+          await exec(process.execPath, [
+            "-e",
+            "require('node:fs').writeFileSync('source.txt', 'child mutated')",
+          ], { captureOutput: true });
+          throw attemptError;
+        }),
+      (error) => {
+        assert.equal(error instanceof HyperionAttemptRollbackError, true);
+        assert.equal((error as HyperionAttemptRollbackError).attemptError, attemptError);
+        assert.equal(
+          (error as HyperionAttemptRollbackError).rollbackError instanceof HyperionIntegrityError,
+          true,
+        );
+        return true;
+      },
+    );
+
+    assert.equal(readFileSync(createdPath, "utf8"), "created");
+    assert.equal(readFileSync(sourcePath, "utf8"), "child mutated");
   });
 
   it("returns non-zero exec results when rejectOnNonZero is false", async () => {
