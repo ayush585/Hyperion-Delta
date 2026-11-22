@@ -2,7 +2,7 @@
 
 All notable release changes for `hyperion-delta` are documented here.
 
-## 0.1.8 - Unreleased
+## 0.1.8 - 2026-11-22
 
 ### Rollback Integrity
 
