@@ -244,6 +244,37 @@ Docs-only lifecycle guidance would reduce API growth but leave correctness depen
 
 A Prettiflow-only adapter could be extremely ergonomic, but the underlying lifecycle problem is general. The reusable SDK should solve it first, then Prettiflow can wrap the same runner.
 
+## 5. Rollback Integrity And Interception Coverage
+
+### Current Limitation
+
+Rollback can only restore a modified or deleted file if a backup was taken before the change. Backups are taken by the VFS interceptor, which sees only writes made through the patched Node `fs` and `fs/promises` module objects. These bypass it:
+
+- child processes and shell tools (`exec()`, `tsc`, formatters, package managers)
+- native code (`esbuild`, SWC, Python extensions)
+- ESM named and namespace imports of `fs` (`import { writeFileSync } from "node:fs"`, `import * as fs from "node:fs"`)
+- `fs` function references captured before `installFsInterceptor()`
+
+`reconcile()`, which `rollback()` always runs first, still detects these changes. Created files are deleted correctly, but modified or deleted files have no backup.
+
+What rollback guarantees:
+
+- Before deleting or restoring anything, rollback checks that every modified, deleted, and metadata entry has a backup record. Modified or metadata-only directory entries are exempt because nothing is restored for them.
+- If a record is missing, rollback throws `HyperionIntegrityError` naming the path, makes no workspace changes, and leaves the checkpoint `active`. Retrying fails the same way until a backup exists. `dispose()` does not roll back, so the workspace keeps its current contents.
+- Inside `runAttempt()`, the failure is raised as `HyperionAttemptRollbackError`, with `attemptError` set to the original error and `rollbackError` set to the integrity error.
+
+What rollback does not guarantee:
+
+- It is not atomic. Created paths are deleted first, then backups are restored one path at a time. A failure partway through stops rollback and leaves the workspace partially restored. Causes include permission errors, locked files on Windows, a full disk, or a backup file that was removed from `.hyperion/checkpoints/` or from tmpfs while its record still exists. The preflight checks that records exist, not that their stored content is still readable.
+- After a partial failure, paths that were already processed are removed from the dirty set and the checkpoint returns to `active`. A later `rollback()` retries only the remaining paths. Paths that were already processed are not re-checked.
+- Each restored file is written to a temp file in the same directory and renamed into place, so no single file is left half-written. The workspace as a whole can still be partially restored.
+
+### Mitigation Direction
+
+- Add an explicit API that backs up files before external tools modify them. Today `track()` only registers paths and takes no backup, so the only backup path is a write through the intercepted `fs` objects.
+- Re-sync ESM named exports after patching (`module.syncBuiltinESMExports()`) so that named imports are intercepted too. This has not shipped yet.
+- Extend preflight to check that each backup's content is still available, not just that its record exists. This needs a storage-strategy interface change.
+
 ## North Star
 
 Hyperion's job is not to replace Git. Its job is to make local agent attempts cheap, isolated, observable, and reversible.
