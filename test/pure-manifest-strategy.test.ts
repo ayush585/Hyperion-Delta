@@ -221,3 +221,88 @@ describe("PureManifestStrategy created-path cleanup", () => {
     assert.equal(readFileSync(path.join(root, "sibling", "file.txt"), "utf8"), "safe");
   });
 });
+
+describe("PureManifestStrategy restorability checks", () => {
+  it("accepts file, tombstone, and directory records without touching the workspace", () => {
+    const root = createTempWorkspace();
+    const strategy = createStrategy(root);
+    writeFileSync(path.join(root, "source.txt"), "original");
+    mkdirSync(path.join(root, "dir"));
+    strategy.backupFile("source.txt");
+    strategy.backupFile("dir");
+    strategy.backupFile("created.txt");
+    writeFileSync(path.join(root, "source.txt"), "mutated");
+    writeFileSync(path.join(root, "created.txt"), "created");
+
+    for (const relativePath of ["source.txt", "dir", "created.txt"]) {
+      strategy.assertRestorable(relativePath);
+    }
+
+    assert.equal(readFileSync(path.join(root, "source.txt"), "utf8"), "mutated");
+    assert.equal(readFileSync(path.join(root, "created.txt"), "utf8"), "created");
+  });
+
+  it("rejects a file record whose backup file was deleted", () => {
+    const root = createTempWorkspace();
+    const strategy = createStrategy(root);
+    writeFileSync(path.join(root, "source.txt"), "original");
+    const record = strategy.backupFile("source.txt");
+    assert.ok(record.backupPath);
+    rmSync(record.backupPath);
+
+    assert.throws(() => strategy.assertRestorable("source.txt"), (error) => {
+      assert.equal(error instanceof HyperionIntegrityError, true);
+      assert.match((error as Error).message, /Missing backup for source.txt/);
+      return true;
+    });
+  });
+
+  it("rejects a file record whose backup path is a directory", () => {
+    const root = createTempWorkspace();
+    const strategy = createStrategy(root);
+    writeFileSync(path.join(root, "source.txt"), "original");
+    const record = strategy.backupFile("source.txt");
+    assert.ok(record.backupPath);
+    rmSync(record.backupPath);
+    mkdirSync(record.backupPath);
+
+    assert.throws(
+      () => strategy.assertRestorable("source.txt"),
+      /Backup for source.txt is not a regular file/,
+    );
+  });
+
+  it("rejects hydrated file records without a backup path", () => {
+    const root = createTempWorkspace();
+    const strategy = createStrategy(root);
+    strategy.hydrateBackupRecords([{ relativePath: "source.txt", kind: "file" }]);
+
+    assert.throws(() => strategy.assertRestorable("source.txt"), /Missing backup for source.txt/);
+  });
+
+  it("validates symlink records by their link target", () => {
+    const root = createTempWorkspace();
+    const strategy = createStrategy(root);
+    strategy.hydrateBackupRecords([
+      { relativePath: "valid-link", kind: "symlink", linkTarget: "target.txt" },
+      { relativePath: "no-target", kind: "symlink" },
+      { relativePath: "empty-target", kind: "symlink", linkTarget: "" },
+      { relativePath: "bad-target", kind: "symlink", linkTarget: 42 as unknown as string },
+    ]);
+
+    strategy.assertRestorable("valid-link");
+    for (const relativePath of ["no-target", "empty-target", "bad-target"]) {
+      assert.throws(
+        () => strategy.assertRestorable(relativePath),
+        new RegExp(`Missing symlink target for ${relativePath}`),
+      );
+    }
+  });
+
+  it("rejects paths without a backup record", () => {
+    const root = createTempWorkspace();
+    const strategy = createStrategy(root);
+
+    assert.throws(() => strategy.assertRestorable("unknown.txt"), HyperionIntegrityError);
+  });
+});

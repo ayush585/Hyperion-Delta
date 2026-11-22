@@ -20,6 +20,9 @@ export interface StorageRestoreResult {
 export interface StorageStrategy {
   backupFile(pathOrPathLike: string): StorageBackupRecord;
   restoreFile(pathOrPathLike: string): StorageRestoreResult;
+  // Throws HyperionIntegrityError if the backup material restoreFile() needs is missing or
+  // unusable. Must not modify the workspace or backup storage.
+  assertRestorable(pathOrPathLike: string): void;
   deleteCreatedPath(pathOrPathLike: string): void;
   getBackupRecord(pathOrPathLike: string): StorageBackupRecord | undefined;
   getBackupRecords(): StorageBackupRecord[];

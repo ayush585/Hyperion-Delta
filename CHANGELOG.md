@@ -7,8 +7,9 @@ All notable release changes for `hyperion-delta` are documented here.
 ### Rollback Integrity
 
 - Fixed a partial rollback when a dirty path had no backup record. This happens when a child process, native tool, or ESM named `fs` import modifies or deletes an existing file. Rollback used to delete created files and restore earlier paths before throwing `HyperionIntegrityError`. It now checks every required backup record before it deletes or restores anything. On failure the workspace is untouched and the checkpoint stays `active`.
-- Kept existing behavior: modified or metadata-only directory entries without a backup record are skipped, and deleted directories still require one.
-- Added regression tests at three levels (rollback engine, workspace, `runAttempt()`): restoration-order edge cases, repeated retries, recovery once a backup record is available, and mid-restore I/O failures.
+- Fixed a partial rollback when a backup record existed but its backup material was unusable. Covered cases: the backup file was deleted, something other than a regular file was at the backup path, or a symlink record had no link target. Rollback used to delete created files and restore earlier paths before failing; for a non-file backup path it also threw an untyped filesystem error. Every storage strategy now implements `assertRestorable()`. Rollback calls it for each entry before the first mutation, and it does not modify anything. Disk backups are checked with `stat` and an open for reading, without reading their contents. In-memory Hot Dirty Buffer backups always pass.
+- Kept existing behavior: modified or metadata-only directory entries without a backup record are skipped, deleted directories still require one, and restore order and successful rollbacks are unchanged.
+- Added regression tests at four levels (rollback engine, storage strategies, workspace, `runAttempt()`): restoration-order edge cases, repeated retries, recovery once a backup is available, mid-restore I/O failures, and deleted, wrong-type, or invalid symlink backups.
 
 ### Tooling
 
@@ -16,7 +17,7 @@ All notable release changes for `hyperion-delta` are documented here.
 
 ### Documentation
 
-- Documented what rollback preflight guarantees and what it does not. Rollback is not atomic: a backup file lost from checkpoint storage, or a filesystem error partway through, still leaves the workspace partially restored with the checkpoint active for retry.
+- Documented what rollback preflight guarantees and what it does not. Rollback is not atomic, and backup contents are not verified. A backup changed after the check, or a filesystem error partway through, still leaves the workspace partially restored with the checkpoint active for retry.
 - Documented that ESM named and namespace imports of `fs`, and `fs` references captured before `installFsInterceptor()`, bypass VFS interception.
 
 ## 0.1.7 - 2026-06-19

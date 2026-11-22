@@ -51,12 +51,19 @@ export class RollbackEngine {
     ];
 
     // Preflight: fail before touching the workspace if any required backup record is
-    // missing. This does not make the restore loop atomic if a filesystem call fails
-    // partway through; processed entries are removed from the dirty set as they succeed.
+    // missing or its backup material is unusable. This does not make the restore loop
+    // atomic: backups can still change after this check, and a filesystem call can fail
+    // partway through. Processed entries are removed from the dirty set as they succeed.
     for (const entry of restoreEntries) {
-      if (this.requiresBackupRecord(entry) && !storage.getBackupRecord(entry.relativePath)) {
-        throw new HyperionIntegrityError(`Missing backup record for ${entry.relativePath}`);
+      if (!storage.getBackupRecord(entry.relativePath)) {
+        if (this.requiresBackupRecord(entry)) {
+          throw new HyperionIntegrityError(`Missing backup record for ${entry.relativePath}`);
+        }
+
+        continue;
       }
+
+      storage.assertRestorable(entry.relativePath);
     }
 
     for (const entry of createdEntries) {

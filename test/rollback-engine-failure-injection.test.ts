@@ -54,6 +54,7 @@ function createStorage(records: ReadonlyArray<StorageBackupRecord>): StorageStra
 
       return { relativePath, restored: true, deleted: false };
     },
+    assertRestorable() {},
     deleteCreatedPath() {},
     getBackupRecord(relativePath) {
       return recordsByPath.get(relativePath);
@@ -91,10 +92,13 @@ function fileRecord(relativePath: string): StorageBackupRecord {
 function createRecordingStorage(records: ReadonlyArray<StorageBackupRecord>): {
   storage: StorageStrategy;
   calls: string[];
+  checks: string[];
   addRecord(record: StorageBackupRecord): void;
 } {
   const recordsByPath = new Map(records.map((record) => [record.relativePath, record]));
+  // Mutating calls and non-mutating restorability checks are logged separately.
   const calls: string[] = [];
+  const checks: string[] = [];
   const storage = createStorage([]);
 
   storage.getBackupRecord = (relativePath) => recordsByPath.get(relativePath);
@@ -109,10 +113,14 @@ function createRecordingStorage(records: ReadonlyArray<StorageBackupRecord>): {
   storage.deleteCreatedPath = (relativePath) => {
     calls.push(`delete:${relativePath}`);
   };
+  storage.assertRestorable = (relativePath) => {
+    checks.push(relativePath);
+  };
 
   return {
     storage,
     calls,
+    checks,
     addRecord(record) {
       recordsByPath.set(record.relativePath, record);
     },
@@ -397,5 +405,82 @@ describe("RollbackEngine failure injection", () => {
     ]);
     assert.equal(checkpoint.status, "disposed");
     assert.equal(checkpoint.dirty.size, 0);
+  });
+
+  it("checks every restorable backup before the first mutation", async () => {
+    const checkpoint = createCheckpoint([
+      createDirtyEntry("created.txt", "created"),
+      createDirtyEntry("changed.txt", "modified"),
+      createDirectoryEntry("dir", "modified"),
+      createDirtyEntry("removed.txt", "deleted"),
+      createDirtyEntry("mode.txt", "metadata"),
+    ]);
+    const { storage, calls } = createRecordingStorage([
+      fileRecord("changed.txt"),
+      { relativePath: "dir", kind: "directory" },
+      fileRecord("removed.txt"),
+      fileRecord("mode.txt"),
+    ]);
+    storage.assertRestorable = (relativePath) => {
+      calls.push(`check:${relativePath}`);
+    };
+
+    await new RollbackEngine().rollback({
+      checkpoint,
+      storage,
+      ghostDirectoryCleaner: createRecordingGhostCleaner(calls),
+      reconcile: async () => {},
+    });
+
+    assert.deepEqual(calls, [
+      "check:changed.txt",
+      "check:dir",
+      "check:removed.txt",
+      "check:mode.txt",
+      "delete:created.txt",
+      "ghost:created.txt",
+      "restore:changed.txt",
+      "restore:dir",
+      "restore:removed.txt",
+      "restore:mode.txt",
+    ]);
+    assert.equal(checkpoint.status, "disposed");
+  });
+
+  it("stops before any mutation when the last backup is not restorable", async () => {
+    const entries = [
+      createDirtyEntry("created-a.txt", "created"),
+      createDirtyEntry("nested/created-b.txt", "created"),
+      createDirtyEntry("modified-a.txt", "modified"),
+      createDirtyEntry("modified-b.txt", "modified"),
+      createDirtyEntry("deleted.txt", "deleted"),
+    ];
+    const checkpoint = createCheckpoint(entries);
+    const { storage, calls, checks } = createRecordingStorage(
+      ["modified-a.txt", "modified-b.txt", "deleted.txt"].map(fileRecord),
+    );
+    storage.assertRestorable = (relativePath) => {
+      checks.push(relativePath);
+      if (relativePath === "deleted.txt") {
+        throw new HyperionIntegrityError(`Missing backup for ${relativePath}`);
+      }
+    };
+
+    await assert.rejects(
+      () =>
+        new RollbackEngine().rollback({
+          checkpoint,
+          storage,
+          ghostDirectoryCleaner: createRecordingGhostCleaner(calls),
+          reconcile: async () => {},
+        }),
+      /Missing backup for deleted.txt/,
+    );
+
+    assert.deepEqual(checks, ["modified-a.txt", "modified-b.txt", "deleted.txt"]);
+    assert.deepEqual(calls, []);
+    assert.equal(checkpoint.status, "active");
+    assert.equal(checkpoint.lock.locked, false);
+    assert.deepEqual([...checkpoint.dirty.keys()].sort(), entries.map((entry) => entry.relativePath).sort());
   });
 });

@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -10,8 +18,11 @@ import {
   HyperionIntegrityError,
   HyperionRollbackError,
   HyperionWorkspace,
+  type CheckpointId,
+  type HyperionConfig,
   type StateManifest,
 } from "../src/index.js";
+import type { StorageStrategy } from "../src/internal/storage-strategy.js";
 
 const require = createRequire(import.meta.url);
 const tempRoots: string[] = [];
@@ -33,14 +44,61 @@ function getCheckpointStatus(workspace: HyperionWorkspace, checkpointId: string)
     .checkpoints.find((checkpoint) => checkpoint.checkpointId === checkpointId)?.status;
 }
 
+function getCheckpointStorage(workspace: HyperionWorkspace, checkpointId: CheckpointId): StorageStrategy {
+  const storage = (
+    workspace as unknown as { checkpointStorage: Map<CheckpointId, StorageStrategy> }
+  ).checkpointStorage.get(checkpointId);
+  assert.ok(storage, "checkpoint storage exists");
+  return storage;
+}
+
+// Returns the on-disk backup file for a path, failing if the backup is held only in memory.
+function getDiskBackupPath(
+  workspace: HyperionWorkspace,
+  checkpointId: CheckpointId,
+  relativePath: string,
+): string {
+  const record = getCheckpointStorage(workspace, checkpointId).getBackupRecord(relativePath);
+  assert.equal(record?.kind, "file");
+  assert.ok(record?.backupPath, `disk backup expected for ${relativePath}`);
+  assert.equal(existsSync(record.backupPath), true);
+  return record.backupPath;
+}
+
+// Captures every workspace file and directory outside .hyperion so a test can assert no change.
+function readWorkspaceTree(root: string, relativeDir = ""): Record<string, string> {
+  const tree: Record<string, string> = {};
+
+  for (const entry of readdirSync(path.join(root, relativeDir), { withFileTypes: true })) {
+    const relativePath = relativeDir ? `${relativeDir}/${entry.name}` : entry.name;
+
+    if (relativePath === ".hyperion") {
+      continue;
+    }
+
+    if (entry.isDirectory()) {
+      tree[`${relativePath}/`] = "<dir>";
+      Object.assign(tree, readWorkspaceTree(root, relativePath));
+    } else {
+      tree[relativePath] = readFileSync(path.join(root, relativePath), "utf8");
+    }
+  }
+
+  return tree;
+}
+
 function createTempWorkspaceRoot(): string {
   const root = mkdtempSync(path.join(tmpdir(), "hyperion-failure-injection-"));
   tempRoots.push(root);
   return root;
 }
 
-function createWorkspace(root: string, enableFsInterceptor = true): HyperionWorkspace {
-  const workspace = new HyperionWorkspace({ workspaceRoot: root, enableFsInterceptor });
+function createWorkspace(
+  root: string,
+  enableFsInterceptor = true,
+  config: Omit<HyperionConfig, "workspaceRoot" | "enableFsInterceptor"> = {},
+): HyperionWorkspace {
+  const workspace = new HyperionWorkspace({ ...config, workspaceRoot: root, enableFsInterceptor });
 
   if (enableFsInterceptor) {
     workspace.installFsInterceptor();
@@ -249,5 +307,135 @@ describe("workspace failure injection", () => {
     assert.equal(existsSync(path.join(root, "src/new.ts")), false);
     assert.equal(existsSync(path.join(root, "generated")), false);
     assert.equal(getCheckpointStatus(workspace, checkpointId), "disposed");
+  });
+
+  for (const [label, config] of [
+    ["disk backups", { useHotBuffer: false }],
+    ["hot buffer spilled to disk", { hotBufferMaxFileBytes: 1 }],
+  ] as const) {
+    it(`detects a deleted backup file before mutating the workspace (${label})`, async () => {
+      const root = createTempWorkspaceRoot();
+      const fs = getCommonJsFs();
+      writeFileSync(path.join(root, "source.txt"), "original");
+      const workspace = createWorkspace(root, true, config);
+      const checkpointId = await workspace.snapshot();
+
+      fs.writeFileSync(path.join(root, "created.txt"), "created by agent");
+      fs.writeFileSync(path.join(root, "source.txt"), "agent edit");
+      rmSync(getDiskBackupPath(workspace, checkpointId, "source.txt"));
+      const before = readWorkspaceTree(root);
+
+      await assert.rejects(
+        () => workspace.rollback(checkpointId),
+        (error) => {
+          assert.equal(error instanceof HyperionIntegrityError, true);
+          assert.match((error as Error).message, /Missing backup for source\.txt/);
+          return true;
+        },
+      );
+
+      assert.deepEqual(readWorkspaceTree(root), before);
+      assert.equal(getCheckpointStatus(workspace, checkpointId), "active");
+    });
+  }
+
+  it("detects a backup path that is not a regular file before mutating the workspace", async () => {
+    const root = createTempWorkspaceRoot();
+    const fs = getCommonJsFs();
+    writeFileSync(path.join(root, "source.txt"), "original");
+    const workspace = createWorkspace(root, true, { useHotBuffer: false });
+    const checkpointId = await workspace.snapshot();
+
+    fs.writeFileSync(path.join(root, "created.txt"), "created by agent");
+    fs.writeFileSync(path.join(root, "source.txt"), "agent edit");
+    const backupPath = getDiskBackupPath(workspace, checkpointId, "source.txt");
+    rmSync(backupPath);
+    mkdirSync(backupPath);
+    const before = readWorkspaceTree(root);
+
+    await assert.rejects(
+      () => workspace.rollback(checkpointId),
+      (error) => {
+        assert.equal(error instanceof HyperionIntegrityError, true);
+        assert.match((error as Error).message, /Backup for source\.txt is not a regular file/);
+        return true;
+      },
+    );
+
+    assert.deepEqual(readWorkspaceTree(root), before);
+    assert.equal(getCheckpointStatus(workspace, checkpointId), "active");
+  });
+
+  for (const [label, linkTarget] of [
+    ["no link target", undefined],
+    ["an empty link target", ""],
+  ] as const) {
+    it(`detects a symlink backup record with ${label} before mutating the workspace`, async () => {
+      const root = createTempWorkspaceRoot();
+      const fs = getCommonJsFs();
+      writeFileSync(path.join(root, "source.txt"), "original");
+      const workspace = createWorkspace(root, true, { useHotBuffer: false });
+      const checkpointId = await workspace.snapshot();
+
+      fs.writeFileSync(path.join(root, "created.txt"), "created by agent");
+      fs.writeFileSync(path.join(root, "source.txt"), "agent edit");
+      // Simulate a corrupt hydrated record: the path is recorded as a symlink without a target.
+      const storage = getCheckpointStorage(workspace, checkpointId);
+      storage.hydrateBackupRecords?.(
+        storage.getBackupRecords().map((record) =>
+          record.relativePath === "source.txt"
+            ? {
+                relativePath: record.relativePath,
+                kind: "symlink" as const,
+                ...(linkTarget === undefined ? {} : { linkTarget }),
+              }
+            : record,
+        ),
+      );
+      const before = readWorkspaceTree(root);
+
+      await assert.rejects(
+        () => workspace.rollback(checkpointId),
+        (error) => {
+          assert.equal(error instanceof HyperionIntegrityError, true);
+          assert.match((error as Error).message, /Missing symlink target for source\.txt/);
+          return true;
+        },
+      );
+
+      assert.deepEqual(readWorkspaceTree(root), before);
+      assert.equal(getCheckpointStatus(workspace, checkpointId), "active");
+    });
+  }
+
+  it("leaves every path unchanged when the unusable backup is last in restoration order", async () => {
+    const root = createTempWorkspaceRoot();
+    const fs = getCommonJsFs();
+    mkdirSync(path.join(root, "src"));
+    for (const name of ["src/alpha.ts", "src/beta.ts", "README.md", "zz-removed.txt"]) {
+      writeFileSync(path.join(root, name), `original ${name}`);
+    }
+    const workspace = createWorkspace(root, true, { useHotBuffer: false });
+    const checkpointId = await workspace.snapshot();
+
+    fs.writeFileSync(path.join(root, "src/alpha.ts"), "agent alpha");
+    fs.writeFileSync(path.join(root, "src/beta.ts"), "agent beta");
+    fs.writeFileSync(path.join(root, "README.md"), "agent readme");
+    fs.mkdirSync(path.join(root, "generated/deep"), { recursive: true });
+    fs.writeFileSync(path.join(root, "generated/deep/out.js"), "generated");
+    fs.writeFileSync(path.join(root, "src/new.ts"), "created");
+    fs.writeFileSync(path.join(root, "notes.md"), "created");
+    // Deleted entries are restored after modified ones, so this backup is used last.
+    fs.rmSync(path.join(root, "zz-removed.txt"));
+    rmSync(getDiskBackupPath(workspace, checkpointId, "zz-removed.txt"));
+    const before = readWorkspaceTree(root);
+
+    await assert.rejects(
+      () => workspace.rollback(checkpointId),
+      /Missing backup for zz-removed\.txt/,
+    );
+
+    assert.deepEqual(readWorkspaceTree(root), before);
+    assert.equal(getCheckpointStatus(workspace, checkpointId), "active");
   });
 });

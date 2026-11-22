@@ -433,6 +433,9 @@ function createCleanupTrackingStorage(
     restoreFile() {
       throw new Error("restoreFile is not used by this test storage");
     },
+    assertRestorable() {
+      throw new Error("assertRestorable is not used by this test storage");
+    },
     deleteCreatedPath() {
       throw new Error("deleteCreatedPath is not used by this test storage");
     },
@@ -2363,6 +2366,9 @@ describe("HyperionWorkspace", () => {
         }
 
         return storage.restoreFile(pathOrPathLike);
+      },
+      assertRestorable(pathOrPathLike: string) {
+        storage.assertRestorable(pathOrPathLike);
       },
       deleteCreatedPath(pathOrPathLike: string) {
         storage.deleteCreatedPath(pathOrPathLike);
