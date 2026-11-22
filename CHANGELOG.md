@@ -2,6 +2,23 @@
 
 All notable release changes for `hyperion-delta` are documented here.
 
+## 0.1.8 - Unreleased
+
+### Rollback Integrity
+
+- Fixed a partial rollback when a dirty path had no backup record. This happens when a child process, native tool, or ESM named `fs` import modifies or deletes an existing file. Rollback used to delete created files and restore earlier paths before throwing `HyperionIntegrityError`. It now checks every required backup record before it deletes or restores anything. On failure the workspace is untouched and the checkpoint stays `active`.
+- Kept existing behavior: modified or metadata-only directory entries without a backup record are skipped, and deleted directories still require one.
+- Added regression tests at three levels (rollback engine, workspace, `runAttempt()`): restoration-order edge cases, repeated retries, recovery once a backup record is available, and mid-restore I/O failures.
+
+### Tooling
+
+- Fixed `npm test` and `npm run test:watch` on Node 22 and later. `node --test <directory>` stopped discovering test files there and reported one failure instead of running the suite. The new `scripts/run-tests.mjs` passes an explicit file list, fails if no test files are found, and passes through the test runner's exit code. It has no dependencies and does not rely on shell globs.
+
+### Documentation
+
+- Documented what rollback preflight guarantees and what it does not. Rollback is not atomic: a backup file lost from checkpoint storage, or a filesystem error partway through, still leaves the workspace partially restored with the checkpoint active for retry.
+- Documented that ESM named and namespace imports of `fs`, and `fs` references captured before `installFsInterceptor()`, bypass VFS interception.
+
 ## 0.1.7 - 2026-06-19
 
 ### Branch Merge Semantics (P1)
