@@ -1,13 +1,16 @@
 import {
   chmodSync,
+  closeSync,
   copyFileSync,
   existsSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
   readlinkSync,
   renameSync,
   rmSync,
+  statSync,
   symlinkSync,
 } from "node:fs";
 import path from "node:path";
@@ -86,6 +89,25 @@ export class PureManifestStrategy implements StorageStrategy {
     }
 
     return this.restoreRegularFile(record);
+  }
+
+  public assertRestorable(pathOrPathLike: string): void {
+    const relativePath = normalizeWorkspacePath(this.workspaceRoot, pathOrPathLike);
+    const record = this.requireRecord(relativePath);
+
+    if (record.kind === "missing" || record.kind === "directory") {
+      return;
+    }
+
+    if (record.kind === "symlink") {
+      if (typeof record.linkTarget !== "string" || record.linkTarget === "") {
+        throw new HyperionIntegrityError(`Missing symlink target for ${relativePath}`);
+      }
+
+      return;
+    }
+
+    assertReadableBackupFile(record);
   }
 
   public deleteCreatedPath(pathOrPathLike: string): void {
@@ -224,6 +246,45 @@ export class PureManifestStrategy implements StorageStrategy {
 
   protected toBackupPath(relativePath: string): string {
     return path.join(this.storageNamespace, "files", ...relativePath.split("/"));
+  }
+}
+
+// Checks the backup file the same way restore will use it (following links) without reading
+// its contents. A successful check does not prevent the file changing before restore runs.
+function assertReadableBackupFile(record: StorageBackupRecord): void {
+  const { relativePath, backupPath } = record;
+
+  if (!backupPath) {
+    throw new HyperionIntegrityError(`Missing backup for ${relativePath}`);
+  }
+
+  let backupStat;
+
+  try {
+    backupStat = statSync(backupPath);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+
+    if (code === "ENOENT" || code === "ENOTDIR") {
+      throw new HyperionIntegrityError(`Missing backup for ${relativePath}`, { cause: error });
+    }
+
+    throw new HyperionIntegrityError(`Backup for ${relativePath} is not accessible: ${code ?? String(error)}`, {
+      cause: error,
+    });
+  }
+
+  if (!backupStat.isFile()) {
+    throw new HyperionIntegrityError(`Backup for ${relativePath} is not a regular file: ${backupPath}`);
+  }
+
+  try {
+    closeSync(openSync(backupPath, "r"));
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    throw new HyperionIntegrityError(`Backup for ${relativePath} is not readable: ${code ?? String(error)}`, {
+      cause: error,
+    });
   }
 }
 

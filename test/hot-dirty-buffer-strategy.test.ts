@@ -153,3 +153,32 @@ describe("HotDirtyBufferStrategy", () => {
     });
   });
 });
+
+describe("HotDirtyBufferStrategy restorability checks", () => {
+  it("accepts in-memory backups that have no file on disk", () => {
+    const root = createTempWorkspace();
+    const strategy = createStrategy(root);
+    writeFileSync(path.join(root, "small.txt"), "original");
+
+    const record = strategy.backupFile("small.txt");
+    writeFileSync(path.join(root, "small.txt"), "mutated");
+
+    assert.equal(record.volatile, true);
+    assert.equal(record.backupPath, undefined);
+    strategy.assertRestorable("small.txt");
+    assert.equal(readFileSync(path.join(root, "small.txt"), "utf8"), "mutated");
+  });
+
+  it("delegates spilled backups and detects a deleted spill file", () => {
+    const root = createTempWorkspace();
+    const strategy = createStrategy(root, { maxFileBytes: 4 });
+    writeFileSync(path.join(root, "large.txt"), "original-large");
+
+    const record = strategy.backupFile("large.txt");
+    assert.ok(record.backupPath);
+    strategy.assertRestorable("large.txt");
+    rmSync(record.backupPath);
+
+    assert.throws(() => strategy.assertRestorable("large.txt"), /Missing backup for large.txt/);
+  });
+});

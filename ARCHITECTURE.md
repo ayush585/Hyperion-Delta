@@ -445,11 +445,12 @@ Blindspot:
 
 - Monkey-patching JavaScript `fs` cannot observe file writes performed by native C++/Rust/Go code, spawned binaries, Python extensions, or package-manager internals.
 - Examples include `esbuild`, `oxc`, SWC, native npm lifecycle scripts, Python build extensions, and arbitrary child processes.
+- Patching the CommonJS `fs` and `fs/promises` objects does not update ESM named or namespace import bindings (`import { writeFileSync } from "node:fs"`), and function references captured before installation keep the original implementation.
 - The mitigation is not optional: `rollback(checkpointId)` must call `reconcile(checkpointId)` internally before restore begins.
 
 ### 6.12 Reconciliation Engine
 
-Child processes bypass Node VFS interception. The Reconciliation Engine closes that gap.
+Child processes bypass Node VFS interception. The Reconciliation Engine detects their changes; created paths can then be removed, but modified or deleted paths can be restored only if a backup was taken before the change.
 
 `workspace.reconcile(checkpointId?)`:
 

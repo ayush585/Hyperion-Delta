@@ -50,6 +50,22 @@ export class RollbackEngine {
       ...this.dirtyEntriesByKind(checkpoint, "metadata"),
     ];
 
+    // Preflight: fail before touching the workspace if any required backup record is
+    // missing or its backup material is unusable. This does not make the restore loop
+    // atomic: backups can still change after this check, and a filesystem call can fail
+    // partway through. Processed entries are removed from the dirty set as they succeed.
+    for (const entry of restoreEntries) {
+      if (!storage.getBackupRecord(entry.relativePath)) {
+        if (this.requiresBackupRecord(entry)) {
+          throw new HyperionIntegrityError(`Missing backup record for ${entry.relativePath}`);
+        }
+
+        continue;
+      }
+
+      storage.assertRestorable(entry.relativePath);
+    }
+
     for (const entry of createdEntries) {
       storage.deleteCreatedPath(entry.relativePath);
       ghostDirectoryCleaner.cleanupAfterCreatedPath(entry.relativePath);
@@ -59,7 +75,7 @@ export class RollbackEngine {
     for (const entry of restoreEntries) {
       const backupRecord = storage.getBackupRecord(entry.relativePath);
 
-      if (!backupRecord && entry.fileType === "directory" && entry.kind !== "deleted") {
+      if (!backupRecord && !this.requiresBackupRecord(entry)) {
         continue;
       }
 
@@ -70,6 +86,11 @@ export class RollbackEngine {
       storage.restoreFile(entry.relativePath);
       checkpoint.dirty.delete(entry.relativePath);
     }
+  }
+
+  // Modified or metadata-only directories without a backup record need no restore.
+  private requiresBackupRecord(entry: DirtyEntry): boolean {
+    return !(entry.fileType === "directory" && entry.kind !== "deleted");
   }
 
   private dirtyEntriesByKind(

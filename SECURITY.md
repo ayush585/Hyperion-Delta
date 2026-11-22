@@ -12,7 +12,9 @@ Security-relevant constraints:
 - User-controlled paths are normalized to workspace-relative form before filesystem operations.
 - Default ignores exclude dependency and internal state folders such as `node_modules/**`, `.git/**`, and `.hyperion/**`.
 - Rollback performs mandatory reconciliation before restore so child-process and native-tool mutations are not silently missed.
-- Missing backup records fail loudly instead of attempting partial silent recovery.
+- Missing backup records, missing or non-regular backup files, unreadable backup files, and symlink records without a target are detected before rollback mutates the workspace, and fail with a typed integrity error.
+- Rollback is not a transaction. Backup contents are not hashed or verified. A backup changed after the preflight check, or a filesystem error during restore, can leave the workspace partially restored. The error is still raised and the checkpoint stays active for retry.
+- VFS interception is not a security boundary. Child processes, native code, and ESM named imports of `fs` bypass it.
 
 ## Reporting
 

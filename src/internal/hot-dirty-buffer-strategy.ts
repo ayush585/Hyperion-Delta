@@ -122,6 +122,17 @@ export class HotDirtyBufferStrategy implements StorageStrategy {
     return { relativePath, restored: true, deleted: false };
   }
 
+  public assertRestorable(pathOrPathLike: string): void {
+    const relativePath = normalizeWorkspacePath(this.options.workspaceRoot, pathOrPathLike);
+
+    // In-memory records hold their full contents; anything else lives in the delegate.
+    if (this.memoryRecords.has(relativePath)) {
+      return;
+    }
+
+    this.options.delegate.assertRestorable(relativePath);
+  }
+
   public deleteCreatedPath(pathOrPathLike: string): void {
     this.options.delegate.deleteCreatedPath(pathOrPathLike);
   }

@@ -45,6 +45,6 @@ The workflow uses OIDC with `id-token: write` and `contents: read`. Do not add n
 ## Current Release Target
 
 - Package: `hyperion-delta`
-- Version: `0.1.7`
+- Version: `0.1.8`
 - Runtime: Node.js 20+
 - Runtime dependencies: none
