@@ -112,7 +112,8 @@ describe("release safety", () => {
     assert.match(workflow, /id-token:\s*write/);
     assert.match(workflow, /contents:\s*read/);
     assert.match(workflow, /environment:\s*npm-publish/);
-    assert.match(workflow, /node-version: 20/);
+    assert.match(workflow, /node-version: 24/);
+    assert.match(workflow, /Trusted publishing requires npm >=11\.5\.1/);
     assert.match(workflow, /run: npm ci/);
     assert.match(workflow, /run: npm run release:final/);
     assert.match(workflow, /run: npm publish --provenance/);
