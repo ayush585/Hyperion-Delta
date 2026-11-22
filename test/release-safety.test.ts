@@ -35,7 +35,7 @@ describe("release safety", () => {
     const scripts = packageJson.scripts;
 
     assert.equal(scripts.typecheck, "tsc -p tsconfig.test.json --noEmit");
-    assert.equal(scripts.test, "npm run build:test && node --test .test-dist/test");
+    assert.equal(scripts.test, "npm run build:test && node scripts/run-tests.mjs");
     assert.equal(scripts.build, "tsc -p tsconfig.json");
     assert.equal(scripts["package:smoke"], "node scripts/package-install-smoke.mjs");
     assert.equal(

@@ -56,8 +56,8 @@
     "test:reliability:repeatability": "npm run build:test && node scripts/run-repeatability-gate.mjs",
     "test:reliability:stress": "npm run build:test && node scripts/run-reliability-stress.mjs",
     "typecheck": "tsc -p tsconfig.test.json --noEmit",
-    "test": "npm run build:test && node --test .test-dist/test",
-    "test:watch": "node --test --watch .test-dist/test"
+    "test": "npm run build:test && node scripts/run-tests.mjs",
+    "test:watch": "node scripts/run-tests.mjs --watch"
   },
   "engines": {
     "node": ">=20"
